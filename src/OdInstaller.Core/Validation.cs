@@ -16,9 +16,15 @@ public static class ManifestValidator
         if (source is null || !Directory.Exists(source)) errors.Add("source.directory does not exist or escapes the manifest directory.");
         else if (!File.Exists(Path.Combine(source, manifest.Application.Executable))) errors.Add("application.executable is missing from source.directory.");
         if (manifest.License.RequireAcceptance && (Resolve(manifestDirectory, manifest.License.File) is not string license || !File.Exists(license))) errors.Add("license.file is required and must exist when acceptance is required.");
+        if (!string.IsNullOrWhiteSpace(manifest.Application.WelcomeImage))
+        {
+            var image = Resolve(manifestDirectory, manifest.Application.WelcomeImage);
+            if (image is null || !File.Exists(image) || !string.Equals(Path.GetExtension(image), ".png", StringComparison.OrdinalIgnoreCase)) errors.Add("application.welcomeImage must reference an existing PNG file within the manifest directory.");
+        }
         return new ValidationResult(errors);
     }
     public static string? Resolve(string root, string relative) => SafePaths.TryResolveUnderRoot(root, relative, out var path) ? path : null;
+    public static string ResolveOutput(string manifestDirectory, string directory) => Path.GetFullPath(Path.IsPathRooted(directory) ? directory : Path.Combine(manifestDirectory, directory));
 }
 
 public static class SafePaths
@@ -27,9 +33,10 @@ public static class SafePaths
     public static bool TryResolveUnderRoot(string root, string relative, out string fullPath)
     {
         fullPath = ""; if (string.IsNullOrWhiteSpace(relative) || Path.IsPathRooted(relative)) return false;
-        var rootFull = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var rootPath = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar);
+        var rootFull = rootPath + Path.DirectorySeparatorChar;
         var candidate = Path.GetFullPath(Path.Combine(rootFull, relative));
-        if (!candidate.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase)) return false;
+        if (!string.Equals(candidate, rootPath, StringComparison.OrdinalIgnoreCase) && !candidate.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase)) return false;
         fullPath = candidate; return true;
     }
     public static string ResolveInstallDirectory(string template, string applicationName) => template.Replace("{LocalAppData}", Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), StringComparison.OrdinalIgnoreCase).Replace("<Application>", applicationName, StringComparison.OrdinalIgnoreCase);

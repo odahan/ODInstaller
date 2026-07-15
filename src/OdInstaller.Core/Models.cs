@@ -11,7 +11,7 @@ public sealed class InstallerManifest
     public ShortcutManifest Shortcuts { get; init; } = new();
     public OutputManifest Output { get; init; } = new();
 }
-public sealed class ApplicationManifest { public string Id { get; init; } = ""; public string Name { get; init; } = ""; public string Version { get; init; } = ""; public string Publisher { get; init; } = ""; public string Executable { get; init; } = ""; public string? Icon { get; init; } }
+public sealed class ApplicationManifest { public string Id { get; init; } = ""; public string Name { get; init; } = ""; public string Version { get; init; } = ""; public string Publisher { get; init; } = ""; public string Executable { get; init; } = ""; public string? Icon { get; init; } public string? WelcomeImage { get; init; } }
 public sealed class SourceManifest { public string Directory { get; init; } = ""; }
 public sealed class InstallationManifest { public string Scope { get; init; } = "perUser"; public string Directory { get; init; } = ""; public bool AllowDirectorySelection { get; init; } = true; }
 public sealed class LicenseManifest { public string File { get; init; } = ""; public bool RequireAcceptance { get; init; } = true; }

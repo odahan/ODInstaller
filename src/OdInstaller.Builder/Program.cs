@@ -14,7 +14,7 @@ internal static class Program
             var manifest = JsonFiles.ReadManifest(manifestPath);
             var validation = ManifestValidator.Validate(manifest, root);
             if (!validation.IsValid) { foreach (var error in validation.Errors) Console.Error.WriteLine("error: " + error); return 2; }
-            var outputDirectory = Option(args, "--output") ?? ManifestValidator.Resolve(root, manifest.Output.Directory) ?? throw new InvalidDataException("Invalid output.directory.");
+            var outputDirectory = Option(args, "--output") ?? ManifestValidator.ResolveOutput(root, manifest.Output.Directory);
             var output = Path.Combine(outputDirectory, manifest.Output.FileName);
             if (File.Exists(output) && !args.Contains("--force", StringComparer.OrdinalIgnoreCase)) throw new IOException($"Output exists: {output}. Use --force to replace it.");
             var runtime = Path.Combine(AppContext.BaseDirectory, "runtime");
@@ -23,7 +23,7 @@ internal static class Program
             var source = ManifestValidator.Resolve(root, manifest.Source.Directory)!; var license = ManifestValidator.Resolve(root, manifest.License.File)!;
             Console.WriteLine($"Including {FileInventory.Enumerate(source).Count} application files.");
             var normalized = Path.Combine(Path.GetTempPath(), $"odinstaller-{Guid.NewGuid():N}.json");
-            try { File.WriteAllText(normalized, System.Text.Json.JsonSerializer.Serialize(manifest, JsonFiles.Options)); PackageFormat.Append(setup, output, source, normalized, license, uninstaller); }
+            try { File.WriteAllText(normalized, System.Text.Json.JsonSerializer.Serialize(manifest, JsonFiles.Options)); PackageFormat.Append(setup, output, source, normalized, license, uninstaller, string.IsNullOrWhiteSpace(manifest.Application.WelcomeImage) ? null : ManifestValidator.Resolve(root, manifest.Application.WelcomeImage)); }
             finally { File.Delete(normalized); }
             Console.WriteLine($"Created {output}"); return 0;
         }
