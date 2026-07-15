@@ -18,17 +18,19 @@ public sealed class CoreTests
     }
 
     [Fact]
-    public void Resolve_AllowsTheManifestDirectoryItself()
+    public void ResolveAbsolute_AcceptsFullyQualifiedPaths()
     {
-        var root = Path.GetTempPath();
-        Assert.Equal(Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar), ManifestValidator.Resolve(root, "."));
+        var path = Path.Combine(Path.GetTempPath(), "installer-input");
+        Assert.Equal(Path.GetFullPath(path), ManifestValidator.ResolveAbsolute(path));
+        Assert.Null(ManifestValidator.ResolveAbsolute("relative-path"));
     }
 
     [Fact]
-    public void ResolveOutput_AllowsAParentDirectory()
+    public void ResolveOutput_RequiresAnAbsoluteDirectory()
     {
-        var root = Path.Combine(Path.GetTempPath(), "project");
-        Assert.Equal(Path.Combine(Path.GetTempPath(), "output"), ManifestValidator.ResolveOutput(root, "../output"));
+        var output = Path.Combine(Path.GetTempPath(), "output");
+        Assert.Equal(Path.GetFullPath(output), ManifestValidator.ResolveOutput(output));
+        Assert.Throws<InvalidDataException>(() => ManifestValidator.ResolveOutput("../output"));
     }
 
     [Fact]
@@ -42,13 +44,20 @@ public sealed class CoreTests
     public void ManifestValidator_ReportsMissingExecutable()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")); Directory.CreateDirectory(Path.Combine(root, "source")); File.WriteAllText(Path.Combine(root, "LICENSE.txt"), "x");
-        try { var result = ManifestValidator.Validate(new InstallerManifest { Application = new ApplicationManifest { Id = "test", Name = "Test", Version = "1.0", Executable = "missing.exe" }, Source = new SourceManifest { Directory = "source" }, License = new LicenseManifest { File = "LICENSE.txt" }, Output = new OutputManifest { FileName = "test.exe" } }, root); Assert.Contains(result.Errors, x => x.Contains("executable", StringComparison.Ordinal)); } finally { Directory.Delete(root, true); }
+        try { var result = ManifestValidator.Validate(new InstallerManifest { Application = new ApplicationManifest { Id = "test", Name = "Test", Version = "1.0", Executable = "missing.exe" }, Source = new SourceManifest { Directory = Path.Combine(root, "source") }, License = new LicenseManifest { File = Path.Combine(root, "LICENSE.txt") }, Output = new OutputManifest { Directory = root, FileName = "test.exe" } }, root); Assert.Contains(result.Errors, x => x.Contains("executable", StringComparison.Ordinal)); } finally { Directory.Delete(root, true); }
     }
 
     [Fact]
     public void ManifestValidator_ReportsInvalidWelcomeImage()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")); Directory.CreateDirectory(Path.Combine(root, "source")); File.WriteAllText(Path.Combine(root, "source", "test.exe"), "x"); File.WriteAllText(Path.Combine(root, "LICENSE.txt"), "x");
-        try { var result = ManifestValidator.Validate(new InstallerManifest { Application = new ApplicationManifest { Id = "test", Name = "Test", Version = "1.0", Executable = "test.exe", WelcomeImage = "welcome.jpg" }, Source = new SourceManifest { Directory = "source" }, License = new LicenseManifest { File = "LICENSE.txt" }, Output = new OutputManifest { FileName = "test.exe" } }, root); Assert.Contains(result.Errors, x => x.Contains("welcomeImage", StringComparison.Ordinal)); } finally { Directory.Delete(root, true); }
+        try { var result = ManifestValidator.Validate(new InstallerManifest { Application = new ApplicationManifest { Id = "test", Name = "Test", Version = "1.0", Executable = "test.exe", WelcomeImage = Path.Combine(root, "welcome.jpg") }, Source = new SourceManifest { Directory = Path.Combine(root, "source") }, License = new LicenseManifest { File = Path.Combine(root, "LICENSE.txt") }, Output = new OutputManifest { Directory = root, FileName = "test.exe" } }, root); Assert.Contains(result.Errors, x => x.Contains("welcomeImage", StringComparison.Ordinal)); } finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void ManifestValidator_ReportsInvalidIcon()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")); Directory.CreateDirectory(Path.Combine(root, "source")); File.WriteAllText(Path.Combine(root, "source", "test.exe"), "x"); File.WriteAllText(Path.Combine(root, "LICENSE.txt"), "x");
+        try { var result = ManifestValidator.Validate(new InstallerManifest { Application = new ApplicationManifest { Id = "test", Name = "Test", Version = "1.0", Executable = "test.exe", Icon = Path.Combine(root, "icon.png") }, Source = new SourceManifest { Directory = Path.Combine(root, "source") }, License = new LicenseManifest { File = Path.Combine(root, "LICENSE.txt") }, Output = new OutputManifest { Directory = root, FileName = "test.exe" } }, root); Assert.Contains(result.Errors, x => x.Contains("application.icon", StringComparison.Ordinal)); } finally { Directory.Delete(root, true); }
     }
 }

@@ -6,13 +6,14 @@ namespace OdInstaller.Core;
 public static class PackageFormat
 {
     private static readonly byte[] Marker = Encoding.ASCII.GetBytes("ODINST01");
-    public static void Append(string host, string output, string source, string normalizedManifest, string license, string uninstaller, string? welcomeImage)
+    public static void Append(string host, string output, string source, string normalizedManifest, string license, string uninstaller, string? welcomeImage, string? icon)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(output)!); File.Copy(host, output, true);
         using var payload = new MemoryStream(); using (var zip = new ZipArchive(payload, ZipArchiveMode.Create, true))
         {
             Add(zip, normalizedManifest, "installer.json"); Add(zip, license, "LICENSE.txt"); Add(zip, uninstaller, "uninstaller/OdInstaller.Uninstaller.exe");
             if (!string.IsNullOrWhiteSpace(welcomeImage)) Add(zip, welcomeImage, "welcome.png");
+            if (!string.IsNullOrWhiteSpace(icon)) Add(zip, icon, "application.ico");
             foreach (var file in FileInventory.Enumerate(source)) Add(zip, Path.Combine(source, file), "app/" + file.Replace('\\', '/'));
         }
         var bytes = payload.ToArray(); using var stream = new FileStream(output, FileMode.Append, FileAccess.Write); stream.Write(bytes); stream.Write(Marker); Span<byte> length = stackalloc byte[8]; BinaryPrimitives.WriteInt64LittleEndian(length, bytes.Length); stream.Write(length);

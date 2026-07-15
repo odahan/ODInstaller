@@ -11,20 +11,26 @@ public static class ManifestValidator
         if (!Version.TryParse(manifest.Application.Version, out _)) errors.Add("application.version must be a valid version.");
         if (string.IsNullOrWhiteSpace(manifest.Application.Executable) || !SafePaths.IsSafeRelative(manifest.Application.Executable)) errors.Add("application.executable must be a safe relative path.");
         if (!string.Equals(manifest.Installation.Scope, "perUser", StringComparison.OrdinalIgnoreCase)) errors.Add("installation.scope must be 'perUser' in V1.");
+        if (ResolveAbsolute(manifest.Output.Directory) is null) errors.Add("output.directory must be an absolute path.");
         if (string.IsNullOrWhiteSpace(manifest.Output.FileName) || Path.GetFileName(manifest.Output.FileName) != manifest.Output.FileName) errors.Add("output.fileName must be a file name only.");
-        var source = Resolve(manifestDirectory, manifest.Source.Directory);
-        if (source is null || !Directory.Exists(source)) errors.Add("source.directory does not exist or escapes the manifest directory.");
+        var source = ResolveAbsolute(manifest.Source.Directory);
+        if (source is null || !Directory.Exists(source)) errors.Add("source.directory must be an existing absolute directory.");
         else if (!File.Exists(Path.Combine(source, manifest.Application.Executable))) errors.Add("application.executable is missing from source.directory.");
-        if (manifest.License.RequireAcceptance && (Resolve(manifestDirectory, manifest.License.File) is not string license || !File.Exists(license))) errors.Add("license.file is required and must exist when acceptance is required.");
+        if (manifest.License.RequireAcceptance && (ResolveAbsolute(manifest.License.File) is not string license || !File.Exists(license))) errors.Add("license.file must be an existing absolute file when acceptance is required.");
         if (!string.IsNullOrWhiteSpace(manifest.Application.WelcomeImage))
         {
-            var image = Resolve(manifestDirectory, manifest.Application.WelcomeImage);
-            if (image is null || !File.Exists(image) || !string.Equals(Path.GetExtension(image), ".png", StringComparison.OrdinalIgnoreCase)) errors.Add("application.welcomeImage must reference an existing PNG file within the manifest directory.");
+            var image = ResolveAbsolute(manifest.Application.WelcomeImage);
+            if (image is null || !File.Exists(image) || !string.Equals(Path.GetExtension(image), ".png", StringComparison.OrdinalIgnoreCase)) errors.Add("application.welcomeImage must reference an existing PNG file by an absolute path.");
+        }
+        if (!string.IsNullOrWhiteSpace(manifest.Application.Icon))
+        {
+            var icon = ResolveAbsolute(manifest.Application.Icon);
+            if (icon is null || !File.Exists(icon) || !string.Equals(Path.GetExtension(icon), ".ico", StringComparison.OrdinalIgnoreCase)) errors.Add("application.icon must reference an existing ICO file by an absolute path.");
         }
         return new ValidationResult(errors);
     }
-    public static string? Resolve(string root, string relative) => SafePaths.TryResolveUnderRoot(root, relative, out var path) ? path : null;
-    public static string ResolveOutput(string manifestDirectory, string directory) => Path.GetFullPath(Path.IsPathRooted(directory) ? directory : Path.Combine(manifestDirectory, directory));
+    public static string? ResolveAbsolute(string path) => !string.IsNullOrWhiteSpace(path) && Path.IsPathFullyQualified(path) ? Path.GetFullPath(path) : null;
+    public static string ResolveOutput(string directory) => ResolveAbsolute(directory) ?? throw new InvalidDataException("output.directory must be an absolute path.");
 }
 
 public static class SafePaths

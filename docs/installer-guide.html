@@ -21,7 +21,7 @@
   <section data-lang="fr" class="active">
     <h2>Principe</h2>
     <p>OD Installer transforme une publication Windows en un seul EXE d’installation. Celui-ci embarque l’interface WPF, une archive ZIP standard, la licence, le manifeste et le désinstalleur.</p>
-    <p class="note"><strong>Organisation validée.</strong> Le manifeste, la licence et la publication sont confinés dans le dossier du projet. Le dossier de sortie peut être personnalisé, y compris dans le parent du projet : c’est le cas de l’exemple OD.HarmoTools.</p>
+    <p class="note"><strong>Chemins explicites.</strong> Les chemins de la publication, de la licence, de l’image d’accueil et de la sortie sont obligatoirement absolus dans le JSON. Ils ne dépendent jamais du dossier où se trouve <code>installer.json</code> : un partage NAS, un autre disque ou tout autre emplacement est accepté.</p>
     <h2>Format du manifeste</h2>
     <pre><code>{
   "application": {
@@ -30,11 +30,11 @@
     "version": "1.0.0",
     "publisher": "Example",
     "executable": "My.App.exe",
-    "icon": "assets/app.ico",
-    "welcomeImage": "assets/welcome.png"
+    "icon": "\\\\nas\\branding\\My.App\\app.ico",
+    "welcomeImage": "\\\\nas\\branding\\My.App\\welcome.png"
   },
   "source": {
-    "directory": "./publish"
+    "directory": "E:\\Builds\\My.App\\publish"
   },
   "installation": {
     "scope": "perUser",
@@ -42,7 +42,7 @@
     "allowDirectorySelection": true
   },
   "license": {
-    "file": "./LICENSE.txt",
+    "file": "F:\\Licences\\My.App-LICENSE.txt",
     "requireAcceptance": true
   },
   "shortcuts": {
@@ -50,16 +50,14 @@
     "desktop": false
   },
   "output": {
-    "directory": "./artifacts",
+    "directory": "E:\\Installers\\My.App",
     "fileName": "My.App-Setup-1.0.0.exe"
   }
 }</code></pre>
-    <table><tr><th>Propriété</th><th>Rôle</th></tr><tr><td><code>application.id</code></td><td>Obligatoire ; clé de désinstallation Windows, sans caractère de nom de fichier invalide.</td></tr><tr><td><code>name, version, publisher</code></td><td>Informations affichées ; la version doit être valide.</td></tr><tr><td><code>executable</code></td><td>Chemin relatif de l’EXE principal dans la publication ; il doit exister.</td></tr><tr><td><code>icon</code></td><td>Optionnel ; réservé à une personnalisation future.</td></tr><tr><td><code>welcomeImage</code></td><td>Optionnel ; chemin relatif vers un fichier PNG sous le dossier du manifeste. L’image est affichée sur le premier écran. Omettez la propriété ou laissez-la vide pour ne pas afficher d’image.</td></tr><tr><td><code>source.directory</code></td><td>Répertoire de publication, relatif au manifeste et obligatoirement contenu dans son dossier.</td></tr><tr><td><code>installation.scope</code></td><td>Uniquement <code>perUser</code> dans cette V1.</td></tr><tr><td><code>installation.directory</code></td><td>Dossier cible ; <code>{LocalAppData}</code> est remplacé pour l’utilisateur courant.</td></tr><tr><td><code>allowDirectorySelection</code></td><td>Autorise l’utilisateur à changer le dossier cible.</td></tr><tr><td><code>license.file, requireAcceptance</code></td><td>Licence relative au manifeste ; l’acceptation est obligatoire si la valeur est vraie.</td></tr><tr><td><code>shortcuts</code></td><td>Création facultative dans le Menu Démarrer et sur le Bureau.</td></tr><tr><td><code>output.directory, fileName</code></td><td>Répertoire de sortie personnalisable et nom de l’EXE ; <code>fileName</code> ne contient pas de chemin.</td></tr></table>
+    <table><tr><th>Propriété</th><th>Rôle</th></tr><tr><td><code>application.id</code></td><td>Obligatoire ; clé de désinstallation Windows, sans caractère de nom de fichier invalide.</td></tr><tr><td><code>name, version, publisher</code></td><td>Informations affichées ; la version doit être valide.</td></tr><tr><td><code>executable</code></td><td>Chemin relatif de l’EXE principal <em>dans</em> la publication ; il doit exister.</td></tr><tr><td><code>icon</code></td><td>Optionnel ; chemin absolu vers un fichier <code>.ico</code>. L’icône est installée avec l’application et utilisée pour les raccourcis du Bureau/Menu Démarrer et dans « Applications installées ».</td></tr><tr><td><code>welcomeImage</code></td><td>Optionnel ; chemin absolu vers un PNG, y compris UNC (<code>\\nas\partage\image.png</code>). Omettez la propriété ou laissez-la vide pour ne pas afficher d’image.</td></tr><tr><td><code>source.directory</code></td><td>Chemin absolu du répertoire de publication.</td></tr><tr><td><code>installation.scope</code></td><td>Uniquement <code>perUser</code> dans cette V1.</td></tr><tr><td><code>installation.directory</code></td><td>Dossier cible ; <code>{LocalAppData}</code> est remplacé pour l’utilisateur courant.</td></tr><tr><td><code>allowDirectorySelection</code></td><td>Autorise l’utilisateur à changer le dossier cible.</td></tr><tr><td><code>license.file, requireAcceptance</code></td><td>Chemin absolu de la licence ; l’acceptation est obligatoire si la valeur est vraie.</td></tr><tr><td><code>shortcuts</code></td><td>Création facultative dans le Menu Démarrer et sur le Bureau.</td></tr><tr><td><code>output.directory, fileName</code></td><td>Chemin absolu du répertoire de sortie et nom de l’EXE ; <code>fileName</code> ne contient pas de chemin.</td></tr></table>
     <h2>Pas à pas complet : OD.HarmoTools</h2>
     <ol>
-      <li><strong>Créez le dossier de projet.</strong> Créez <code>E:\OD. HarmoToolsInstaller\project</code>.</li>
-      <li><strong>Copiez la publication.</strong> Copiez tout le contenu de <code>E:\HarmoToolsPublish</code> dans <code>E:\OD. HarmoToolsInstaller\project\publish</code>. Vérifiez notamment la présence de <code>OD.HarmoTools.exe</code>.</li>
-      <li><strong>Ajoutez la licence.</strong> Copiez la licence finale dans <code>E:\OD. HarmoToolsInstaller\project\LICENSE.txt</code>.</li>
+      <li><strong>Conservez vos fichiers à leur emplacement.</strong> La publication peut rester dans <code>E:\HarmoToolsPublish</code>, la licence dans <code>F:\Licences\OD.HarmoTools-LICENSE.txt</code> et l’image sur <code>\\nas\branding\OD.HarmoTools\welcome.png</code>.</li>
       <li><strong>Créez le manifeste.</strong> Créez <code>E:\OD. HarmoToolsInstaller\project\installer.json</code> avec le contenu ci-dessous.</li>
     </ol>
     <pre><code>{
@@ -69,27 +67,27 @@
     "version": "1.0.0",
     "publisher": "Olivier Dahan",
     "executable": "OD.HarmoTools.exe",
-    "welcomeImage": "./welcome.png"
+    "welcomeImage": "\\\\nas\\branding\\OD.HarmoTools\\welcome.png"
   },
-  "source": { "directory": "./publish" },
+  "source": { "directory": "E:\\HarmoToolsPublish" },
   "installation": {
     "scope": "perUser",
     "directory": "{LocalAppData}/Programs/OD.HarmoTools",
     "allowDirectorySelection": true
   },
-  "license": { "file": "./LICENSE.txt", "requireAcceptance": true },
+  "license": { "file": "F:\\Licences\\OD.HarmoTools-LICENSE.txt", "requireAcceptance": true },
   "shortcuts": { "startMenu": true, "desktop": false },
   "output": {
-    "directory": "..",
+    "directory": "E:\\Installers\\OD.HarmoTools",
     "fileName": "OD.HarmoTools-Setup-1.0.0.exe"
   }
 }</code></pre>
-    <ol start="5"><li><strong>Compilez le générateur.</strong> Ouvrez PowerShell dans <code>E:\ODInstaller</code>, puis exécutez <code>dotnet build OdInstaller.slnx -c Release</code>.</li><li><strong>Préparez le runtime autonome.</strong> Dans la même fenêtre, exécutez <code>.\build-runtime.ps1</code>. Cette étape construit l’installateur WPF et le désinstalleur sous forme autonome.</li><li><strong>Générez l’installeur.</strong> Exécutez : <pre><code>dotnet run --project src\OdInstaller.Builder -c Release -- build "E:\OD. HarmoToolsInstaller\project\installer.json" --force</code></pre></li><li><strong>Récupérez le résultat.</strong> Le fichier final est <code>E:\OD. HarmoToolsInstaller\OD.HarmoTools-Setup-1.0.0.exe</code>. Copiez-le ou lancez-le directement pour tester l’assistant.</li></ol>
+    <ol start="2"><li><strong>Compilez le générateur.</strong> Ouvrez PowerShell dans <code>E:\ODInstaller</code>, puis exécutez <code>dotnet build OdInstaller.slnx -c Release</code>.</li><li><strong>Préparez le runtime autonome.</strong> Dans la même fenêtre, exécutez <code>.\build-runtime.ps1</code>. Cette étape construit l’installateur WPF et le désinstalleur sous forme autonome.</li><li><strong>Générez l’installeur.</strong> Exécutez : <pre><code>dotnet run --project src\OdInstaller.Builder -c Release -- build "E:\OD. HarmoToolsInstaller\project\installer.json" --force</code></pre></li><li><strong>Récupérez le résultat.</strong> Le fichier final est <code>E:\Installers\OD.HarmoTools\OD.HarmoTools-Setup-1.0.0.exe</code>. Copiez-le ou lancez-le directement pour tester l’assistant.</li></ol>
   </section>
   <section data-lang="en">
-    <h2>Overview</h2><p>OD Installer turns a Windows publication into one setup EXE. It embeds the WPF UI, a standard ZIP archive, license, manifest, and uninstaller.</p><p class="note"><strong>Validated layout.</strong> The manifest, license, and published application stay inside the project folder. The output folder is customizable, including the project parent folder as used in the OD.HarmoTools example.</p><p><code>application.welcomeImage</code> is optional. It must be a PNG path relative to the manifest and is displayed on the welcome screen. Omit it or leave it empty to display no image.</p>
-    <h2>Manifest format</h2><p>The formatted JSON example and property table are identical to the French version. Recognized fields are <code>application.id/name/version/publisher/executable/icon/welcomeImage</code>, <code>source.directory</code>, <code>installation.scope/directory/allowDirectorySelection</code>, <code>license.file/requireAcceptance</code>, <code>shortcuts.startMenu/desktop</code>, and <code>output.directory/fileName</code>. Only <code>perUser</code> is supported. Source and license paths remain below the manifest directory; the output directory may be any customized relative or absolute path.</p>
-    <h2>Detailed walkthrough: OD.HarmoTools</h2><ol><li>Create <code>E:\OD. HarmoToolsInstaller\project</code>.</li><li>Copy every item from <code>E:\HarmoToolsPublish</code> to <code>E:\OD. HarmoToolsInstaller\project\publish</code>, including <code>OD.HarmoTools.exe</code>.</li><li>Copy the final license to <code>E:\OD. HarmoToolsInstaller\project\LICENSE.txt</code>.</li><li>Create <code>E:\OD. HarmoToolsInstaller\project\installer.json</code> with the formatted French example. Its <code>output.directory</code> is <code>..</code>, so output is the requested parent folder.</li><li>In <code>E:\ODInstaller</code>, run <code>dotnet build OdInstaller.slnx -c Release</code>.</li><li>Run <code>.\build-runtime.ps1</code>.</li><li>Run <code>dotnet run --project src\OdInstaller.Builder -c Release -- build "E:\OD. HarmoToolsInstaller\project\installer.json" --force</code>.</li><li>Take the completed installer from <code>E:\OD. HarmoToolsInstaller\OD.HarmoTools-Setup-1.0.0.exe</code>.</li></ol>
+    <h2>Overview</h2><p>OD Installer turns a Windows publication into one setup EXE. It embeds the WPF UI, a standard ZIP archive, license, manifest, and uninstaller.</p><p class="note"><strong>Explicit paths.</strong> Publication, license, welcome image, and output paths must be absolute JSON paths. They never depend on the folder containing <code>installer.json</code>; NAS UNC paths and other drives are supported.</p><p><code>application.executable</code> remains a relative path inside <code>source.directory</code>, because it identifies a file within the published application.</p>
+    <h2>Manifest format</h2><p>The formatted JSON example and property table are identical to the French version. <code>source.directory</code>, <code>license.file</code>, <code>application.welcomeImage</code>, and <code>output.directory</code> are absolute paths. Only <code>perUser</code> is supported.</p>
+    <h2>Detailed walkthrough: OD.HarmoTools</h2><ol><li>Keep the publish directory at <code>E:\HarmoToolsPublish</code>, the license at <code>F:\Licences\OD.HarmoTools-LICENSE.txt</code>, and the welcome image at <code>\\nas\branding\OD.HarmoTools\welcome.png</code>.</li><li>Create the manifest anywhere, using the French example’s absolute paths.</li><li>In <code>E:\ODInstaller</code>, run <code>dotnet build OdInstaller.slnx -c Release</code>, then <code>.\build-runtime.ps1</code>.</li><li>Run <code>dotnet run --project src\OdInstaller.Builder -c Release -- build "E:\OD. HarmoToolsInstaller\project\installer.json" --force</code>.</li><li>Take the installer from <code>E:\Installers\OD.HarmoTools\OD.HarmoTools-Setup-1.0.0.exe</code>.</li></ol>
   </section>
   <script>const select=document.getElementById('language');select.onchange=()=>document.querySelectorAll('[data-lang]').forEach(section=>section.classList.toggle('active',section.dataset.lang===select.value));</script>
 </body></html>
