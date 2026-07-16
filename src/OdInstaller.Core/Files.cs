@@ -1,28 +1,86 @@
 using System.IO.Compression;
 
 namespace OdInstaller.Core;
+
+/// <summary>
+/// Provides operations for enumerating and extracting files.
+/// </summary>
 public static class FileInventory
 {
+    /// <summary>
+    /// Returns all files in a directory as relative paths.
+    /// </summary>
+    /// <param name="source">Source directory.</param>
+    /// <returns>List of relative paths of the files found.</returns>
+    /// <exception cref="InvalidDataException">
+    /// Thrown when a junction point or a name collision is detected.
+    /// </exception>
     public static IReadOnlyList<string> Enumerate(string source)
     {
         var result = new List<string>();
-        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+
+        foreach (var file in Directory.EnumerateFiles(
+                     source,
+                     "*",
+                     SearchOption.AllDirectories))
         {
             var attributes = File.GetAttributes(file);
-            if ((attributes & FileAttributes.ReparsePoint) != 0) throw new InvalidDataException($"Reparse point not allowed: {file}");
+
+            // Junction points and symbolic links are rejected
+            // to avoid escaping the source directory.
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                throw new InvalidDataException(
+                    $"Reparse point not allowed: {file}");
+            }
+
             result.Add(Path.GetRelativePath(source, file));
         }
-        if (result.Distinct(StringComparer.OrdinalIgnoreCase).Count() != result.Count) throw new InvalidDataException("File name collision detected.");
+
+        // A collision can occur on case-insensitive file systems.
+        if (result.Distinct(StringComparer.OrdinalIgnoreCase).Count()
+            != result.Count)
+        {
+            throw new InvalidDataException("File name collision detected.");
+        }
+
         return result;
     }
+
+    /// <summary>
+    /// Extracts a ZIP archive into a directory, validating each entry path.
+    /// </summary>
+    /// <param name="zipStream">Stream containing the ZIP archive.</param>
+    /// <param name="destination">Destination directory.</param>
+    /// <exception cref="InvalidDataException">
+    /// Thrown when an archive entry attempts to escape the target directory.
+    /// </exception>
     public static void ExtractSafely(Stream zipStream, string destination)
     {
-        using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, leaveOpen: false);
+        using var archive = new ZipArchive(
+            zipStream,
+            ZipArchiveMode.Read,
+            leaveOpen: false);
+
         foreach (var entry in archive.Entries)
         {
-            if (string.IsNullOrEmpty(entry.Name)) continue;
-            if (!SafePaths.TryResolveUnderRoot(destination, entry.FullName, out var target)) throw new InvalidDataException($"Unsafe archive entry: {entry.FullName}");
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!); entry.ExtractToFile(target, overwrite: true);
+            // Entries representing a directory only are skipped.
+            if (string.IsNullOrEmpty(entry.Name))
+            {
+                continue;
+            }
+
+            if (!SafePaths.TryResolveUnderRoot(
+                    destination,
+                    entry.FullName,
+                    out var target))
+            {
+                throw new InvalidDataException(
+                    $"Unsafe archive entry: {entry.FullName}");
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            entry.ExtractToFile(target, overwrite: true);
         }
     }
 }
