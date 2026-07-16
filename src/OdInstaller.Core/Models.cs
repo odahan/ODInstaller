@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace OdInstaller.Core;
 
@@ -27,8 +28,22 @@ public sealed class InstalledManifest
 
 public static class JsonFiles
 {
-    public static readonly JsonSerializerOptions Options = new() { PropertyNameCaseInsensitive = true, WriteIndented = true };
-    public static InstallerManifest ReadManifest(string path) => JsonSerializer.Deserialize<InstallerManifest>(File.ReadAllText(path), Options) ?? throw new InvalidDataException("The manifest is empty.");
+    public static readonly JsonSerializerOptions Options = new() { PropertyNameCaseInsensitive = true, WriteIndented = true, AllowTrailingCommas = true, ReadCommentHandling = JsonCommentHandling.Skip };
+    private static readonly Regex LegacyDoubleQuotedValue = new("(?<prefix>:\\s*)\"\"(?<value>[^\"\r\n]*)\"\"(?=\\s*[,}])", RegexOptions.Compiled);
+
+    public static InstallerManifest ReadManifest(string path)
+    {
+        var content = File.ReadAllText(path);
+        try { return DeserializeManifest(content); }
+        catch (JsonException)
+        {
+            var normalized = LegacyDoubleQuotedValue.Replace(content, match => match.Groups["prefix"].Value + JsonSerializer.Serialize(match.Groups["value"].Value));
+            if (string.Equals(content, normalized, StringComparison.Ordinal)) throw;
+            return DeserializeManifest(normalized);
+        }
+    }
+
+    private static InstallerManifest DeserializeManifest(string content) => JsonSerializer.Deserialize<InstallerManifest>(content, Options) ?? throw new InvalidDataException("The manifest is empty.");
     public static void WriteInstalledManifest(string path, InstalledManifest manifest) => File.WriteAllText(path, JsonSerializer.Serialize(manifest, Options));
     public static InstalledManifest ReadInstalledManifest(string path) => JsonSerializer.Deserialize<InstalledManifest>(File.ReadAllText(path), Options) ?? throw new InvalidDataException("The installed manifest is invalid.");
 }

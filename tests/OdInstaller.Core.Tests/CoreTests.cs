@@ -4,6 +4,57 @@ namespace OdInstaller.Core.Tests;
 public sealed class CoreTests
 {
     [Fact]
+    public void ReadManifest_AcceptsCommentsAndTrailingCommas()
+    {
+        var path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(path, """
+            {
+              // A hand-edited configuration remains supported.
+              "application": { "id": "Demo", "name": "Demo", "version": "1.0.0", "executable": "Demo.exe", },
+              "source": { "directory": "C:\\source", },
+              "installation": { "directory": "{LocalAppData}/Programs/Demo", },
+              "license": { "file": "", "requireAcceptance": false, },
+              "shortcuts": { },
+              "output": { "directory": "C:\\output", "fileName": "Demo-Setup.exe", },
+            }
+            """);
+
+            var manifest = JsonFiles.ReadManifest(path);
+
+            Assert.Equal("Demo", manifest.Application.Name);
+            Assert.Equal("Demo-Setup.exe", manifest.Output.FileName);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void ReadManifest_RepairsLegacyDoubleQuotedFilePath()
+    {
+        var path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(path, """
+            {
+              "application": {
+                "id": "Demo",
+                "name": "Demo",
+                "version": "1.0.0",
+                "executable": "Demo.exe",
+                "icon": ""C:\legacy\Demo.ico""
+              }
+            }
+            """);
+
+            var manifest = JsonFiles.ReadManifest(path);
+
+            Assert.Equal("C:\\legacy\\Demo.ico", manifest.Application.Icon);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
     public void SafePaths_RejectsTraversalAndAbsolutePaths()
     {
         Assert.False(SafePaths.TryResolveUnderRoot(Path.GetTempPath(), "../escape.txt", out _));
@@ -31,6 +82,28 @@ public sealed class CoreTests
         var output = Path.Combine(Path.GetTempPath(), "output");
         Assert.Equal(Path.GetFullPath(output), ManifestValidator.ResolveOutput(output));
         Assert.Throws<InvalidDataException>(() => ManifestValidator.ResolveOutput("../output"));
+    }
+
+    [Fact]
+    public void ManifestValidator_ResolvesPathsRelativeToTheManifest()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "publish")); File.WriteAllText(Path.Combine(root, "publish", "Demo.exe"), "x"); File.WriteAllText(Path.Combine(root, "LICENSE.txt"), "x");
+        try
+        {
+            var manifest = new InstallerManifest
+            {
+                Application = new ApplicationManifest { Id = "demo", Name = "Demo", Version = "1.0", Executable = "Demo.exe" },
+                Source = new SourceManifest { Directory = "./publish" },
+                Installation = new InstallationManifest { Directory = "{LocalAppData}/Programs/Demo" },
+                License = new LicenseManifest { File = "./LICENSE.txt", RequireAcceptance = true },
+                Output = new OutputManifest { Directory = "..", FileName = "Demo-Setup.exe" }
+            };
+
+            Assert.True(ManifestValidator.Validate(manifest, root).IsValid);
+            Assert.Equal(Path.GetFullPath(Path.Combine(root, "..")), ManifestValidator.ResolveOutput("..", root));
+        }
+        finally { Directory.Delete(root, true); }
     }
 
     [Fact]
