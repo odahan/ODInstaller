@@ -22,6 +22,8 @@
     <h2>Principe</h2>
     <p>OD Installer transforme une publication Windows en un seul EXE d’installation. Celui-ci embarque l’interface WPF, une archive ZIP standard, la licence, le manifeste et le désinstalleur.</p>
     <p class="note"><strong>Chemins explicites.</strong> Les chemins de la publication, de la licence, de l’image d’accueil et de la sortie sont obligatoirement absolus dans le JSON. Ils ne dépendent jamais du dossier où se trouve <code>installer.json</code> : un partage NAS, un autre disque ou tout autre emplacement est accepté.</p>
+    <h2>Configurateur graphique</h2>
+    <p><code>OdInstaller.Configurator</code> permet de créer, ouvrir, modifier, valider et enregistrer le fichier de configuration <code>installer.json</code> sans avoir à manipuler le format JSON à la main. Depuis les sources, lancez-le avec <code>dotnet run --project src/OdInstaller.Configurator</code>.</p>
     <h2>Format du manifeste</h2>
     <pre><code>{
   "application": {
@@ -86,6 +88,7 @@
   </section>
   <section data-lang="en">
     <h2>Overview</h2><p>OD Installer turns a Windows publication into one setup EXE. It embeds the WPF UI, a standard ZIP archive, license, manifest, and uninstaller.</p><p class="note"><strong>Explicit paths.</strong> Publication, license, welcome image, and output paths must be absolute JSON paths. They never depend on the folder containing <code>installer.json</code>; NAS UNC paths and other drives are supported.</p><p><code>application.executable</code> remains a relative path inside <code>source.directory</code>, because it identifies a file within the published application.</p>
+    <h2>Graphical configurator</h2><p><code>OdInstaller.Configurator</code> lets you create, open, edit, validate, and save the <code>installer.json</code> configuration file without editing JSON by hand. From the source tree, run it with <code>dotnet run --project src/OdInstaller.Configurator</code>.</p>
     <h2>Manifest format</h2><p>The formatted JSON example and property table are identical to the French version. <code>source.directory</code>, <code>license.file</code>, <code>application.welcomeImage</code>, and <code>output.directory</code> are absolute paths. Only <code>perUser</code> is supported.</p>
     <h2>Detailed walkthrough: OD.HarmoTools</h2><ol><li>Keep the publish directory at <code>E:\HarmoToolsPublish</code>, the license at <code>F:\Licences\OD.HarmoTools-LICENSE.txt</code>, and the welcome image at <code>\\nas\branding\OD.HarmoTools\welcome.png</code>.</li><li>Create the manifest anywhere, using the French example’s absolute paths.</li><li>In <code>E:\ODInstaller</code>, run <code>dotnet build OdInstaller.slnx -c Release</code>, then <code>.\build-runtime.ps1</code>.</li><li>Run <code>dotnet run --project src\OdInstaller.Builder -c Release -- build "E:\OD. HarmoToolsInstaller\project\installer.json" --force</code>.</li><li>Take the installer from <code>E:\Installers\OD.HarmoTools\OD.HarmoTools-Setup-1.0.0.exe</code>.</li></ol>
   </section>

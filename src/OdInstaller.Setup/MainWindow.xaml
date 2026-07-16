@@ -43,24 +43,52 @@
 
         <!-- Compact dark scrollbar appearance. -->
         <Style TargetType="ScrollBar">
-            <Setter Property="Background" Value="#252525" />
-            <Setter Property="Width" Value="12" />
+            <Setter Property="Background" Value="#191919" />
+            <Setter Property="Width" Value="8" />
+            <Setter Property="Margin" Value="4,2,2,2" />
 
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ScrollBar">
                         <Border
                             Background="{TemplateBinding Background}"
-                            CornerRadius="2">
+                            CornerRadius="4"
+                            Padding="1">
                             <Track
                                 x:Name="PART_Track"
-                                Orientation="{TemplateBinding Orientation}">
+                                Orientation="{TemplateBinding Orientation}"
+                                IsDirectionReversed="True">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        Command="{x:Static ScrollBar.PageUpCommand}"
+                                        CommandTarget="{Binding RelativeSource={RelativeSource TemplatedParent}}"
+                                        IsTabStop="False" />
+                                </Track.DecreaseRepeatButton>
                                 <Track.Thumb>
                                     <Thumb
-                                        Background="#666666"
-                                        BorderBrush="#888888"
-                                        BorderThickness="1" />
+                                        BorderBrush="#77808C"
+                                        BorderThickness="1">
+                                        <Thumb.Template>
+                                            <ControlTemplate TargetType="Thumb">
+                                                <Border
+                                                    Background="#59616C"
+                                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                                    CornerRadius="3" />
+                                            </ControlTemplate>
+                                        </Thumb.Template>
+                                    </Thumb>
                                 </Track.Thumb>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        Command="{x:Static ScrollBar.PageDownCommand}"
+                                        CommandTarget="{Binding RelativeSource={RelativeSource TemplatedParent}}"
+                                        IsTabStop="False" />
+                                </Track.IncreaseRepeatButton>
                             </Track>
                         </Border>
                     </ControlTemplate>
