@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/OD.Installer.Builder/OD.Installer.Builder.csproj" />
+    <Project Path="src/OD.Installer.Configurator/OD.Installer.Configurator.csproj" />
+    <Project Path="src/OD.Installer.Core/OD.Installer.Core.csproj" />
+    <Project Path="src/OD.Installer.Setup/OD.Installer.Setup.csproj" />
+    <Project Path="src/OD.Installer.Uninstaller/OD.Installer.Uninstaller.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/OD.Installer.Builder.Tests/OD.Installer.Builder.Tests.csproj" />
+    <Project Path="tests/OD.Installer.Core.Tests/OD.Installer.Core.Tests.csproj" />
+  </Folder>
+</Solution>

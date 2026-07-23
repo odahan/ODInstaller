@@ -1,0 +1,11 @@
+[
+  {
+    "Name": "Configurateur WPF",
+    "Projects": [
+      {
+        "Path": "src\\OD.Installer.Configurator\\OD.Installer.Configurator.csproj",
+        "Action": "Start"
+      }
+    ]
+  }
+]
