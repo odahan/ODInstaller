@@ -10,6 +10,8 @@
         <MenuItem Header="_Nouveau" Click="New_Click" InputGestureText="Ctrl+N" />
         <MenuItem Header="_Ouvrir..." Click="Open_Click" InputGestureText="Ctrl+O" />
         <Separator />
+        <MenuItem x:Name="RecentFilesMenu" Header="_Recent" SubmenuOpened="RecentFilesMenu_SubmenuOpened" />
+        <Separator />
         <MenuItem Header="_Enregistrer" Click="Save_Click" InputGestureText="Ctrl+S" />
         <MenuItem Header="Enregistrer _sous..." Click="SaveAs_Click" />
         <Separator />
