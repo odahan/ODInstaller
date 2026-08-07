@@ -133,4 +133,52 @@ public sealed class CoreTests
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")); Directory.CreateDirectory(Path.Combine(root, "source")); File.WriteAllText(Path.Combine(root, "source", "test.exe"), "x"); File.WriteAllText(Path.Combine(root, "LICENSE.txt"), "x");
         try { var result = ManifestValidator.Validate(new InstallerManifest { Application = new ApplicationManifest { Id = "test", Name = "Test", Version = "1.0", Executable = "test.exe", Icon = Path.Combine(root, "icon.png") }, Source = new SourceManifest { Directory = Path.Combine(root, "source") }, License = new LicenseManifest { File = Path.Combine(root, "LICENSE.txt") }, Output = new OutputManifest { Directory = root, FileName = "test.exe" } }, root); Assert.Contains(result.Errors, x => x.Contains("application.icon", StringComparison.Ordinal)); } finally { Directory.Delete(root, true); }
     }
+
+    [Fact]
+    public void ManifestValidator_RejectsApplicationNameWithInvalidCharacters()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")); Directory.CreateDirectory(Path.Combine(root, "source")); File.WriteAllText(Path.Combine(root, "source", "test.exe"), "x"); File.WriteAllText(Path.Combine(root, "LICENSE.txt"), "x");
+        try { var result = ManifestValidator.Validate(new InstallerManifest { Application = new ApplicationManifest { Id = "test", Name = "Bad:Name", Version = "1.0", Executable = "test.exe" }, Source = new SourceManifest { Directory = Path.Combine(root, "source") }, License = new LicenseManifest { File = Path.Combine(root, "LICENSE.txt") }, Output = new OutputManifest { Directory = root, FileName = "test.exe" } }, root); Assert.Contains(result.Errors, x => x.Contains("application.name", StringComparison.Ordinal)); } finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void ManifestValidator_RequiresLicenseFileEvenWhenAcceptanceIsOptional()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")); Directory.CreateDirectory(Path.Combine(root, "source")); File.WriteAllText(Path.Combine(root, "source", "test.exe"), "x");
+        try { var result = ManifestValidator.Validate(new InstallerManifest { Application = new ApplicationManifest { Id = "test", Name = "Test", Version = "1.0", Executable = "test.exe" }, Source = new SourceManifest { Directory = Path.Combine(root, "source") }, License = new LicenseManifest { File = "", RequireAcceptance = false }, Output = new OutputManifest { Directory = root, FileName = "test.exe" } }, root); Assert.Contains(result.Errors, x => x.Contains("license", StringComparison.Ordinal)); } finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void Inventory_RejectsJunctionDirectories()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root, "source"));
+            Directory.CreateDirectory(Path.Combine(root, "outside"));
+            File.WriteAllText(Path.Combine(root, "outside", "secret.txt"), "x");
+
+            var junction = Path.Combine(root, "source", "link");
+            using var process = System.Diagnostics.Process.Start(
+                new System.Diagnostics.ProcessStartInfo(
+                    "cmd.exe",
+                    $"/c mklink /J \"{junction}\" \"{Path.Combine(root, "outside")}\"")
+                {
+                    CreateNoWindow = true,
+                    UseShellExecute = false
+                })!;
+
+            process.WaitForExit();
+            Assert.Equal(0, process.ExitCode);
+
+            Assert.Throws<InvalidDataException>(
+                () => FileInventory.Enumerate(Path.Combine(root, "source")));
+        }
+        finally
+        {
+            var junction = Path.Combine(root, "source", "link");
+            if (Directory.Exists(junction)) Directory.Delete(junction);
+            Directory.Delete(root, true);
+        }
+    }
 }

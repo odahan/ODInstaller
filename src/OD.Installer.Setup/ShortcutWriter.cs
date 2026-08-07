@@ -1,4 +1,7 @@
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+using System.Text;
 using OD.Installer.Core;
 
 namespace OD.Installer.Setup;
@@ -7,11 +10,19 @@ namespace OD.Installer.Setup;
 /// Creates Windows shortcuts for the installed application.
 /// </summary>
 /// <remarks>
-/// Shortcuts are stored as <c>.url</c> files. This avoids an extended COM
-/// dependency while remaining natively supported by Windows.
+/// Shortcuts are real <c>.lnk</c> files created through the shell's
+/// <c>IShellLink</c> COM interface, which is part of Windows and requires
+/// no external dependency. Setting the working directory is important for
+/// applications that depend on their own folder at launch.
 /// </remarks>
 internal static class ShortcutWriter
 {
+    /// <summary>
+    /// CLSID of the ShellLink COM class.
+    /// </summary>
+    private static readonly Guid ClsidShellLink =
+        new("00021401-0000-0000-C000-000000000046");
+
     /// <summary>
     /// Creates the requested Start menu and desktop shortcuts.
     /// </summary>
@@ -56,11 +67,13 @@ internal static class ShortcutWriter
             var startMenuPath = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.StartMenu),
                 "Programs",
-                $"{manifest.Application.Name}.url");
+                $"{manifest.Application.Name}.lnk");
 
-            WriteInternetShortcut(
+            WriteShortcut(
                 startMenuPath,
+                manifest.Application.Name,
                 targetPath,
+                installDirectory,
                 existingIconPath);
 
             createdShortcuts.Add(startMenuPath);
@@ -70,11 +83,13 @@ internal static class ShortcutWriter
         {
             var desktopPath = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
-                $"{manifest.Application.Name}.url");
+                $"{manifest.Application.Name}.lnk");
 
-            WriteInternetShortcut(
+            WriteShortcut(
                 desktopPath,
+                manifest.Application.Name,
                 targetPath,
+                installDirectory,
                 existingIconPath);
 
             createdShortcuts.Add(desktopPath);
@@ -84,32 +99,100 @@ internal static class ShortcutWriter
     }
 
     /// <summary>
-    /// Writes an Internet shortcut that points to a local executable.
+    /// Writes a <c>.lnk</c> shortcut pointing to the target executable.
     /// </summary>
     /// <param name="path">Full path of the shortcut file to create.</param>
+    /// <param name="description">Description shown for the shortcut.</param>
     /// <param name="target">Full path of the target executable.</param>
+    /// <param name="workingDirectory">Working directory set on the shortcut.</param>
     /// <param name="icon">
-    /// Full path of the icon to use, or <see langword="null"/> to create
-    /// the shortcut without a custom icon.
+    /// Full path of the icon to use, or <see langword="null"/> to let the
+    /// shortcut use the executable's own icon.
     /// </param>
-    private static void WriteInternetShortcut(
+    private static void WriteShortcut(
         string path,
+        string description,
         string target,
+        string workingDirectory,
         string? icon)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
 
-        var content =
-            "[InternetShortcut]" + Environment.NewLine +
-            $"URL=file:///{target.Replace('\\', '/')}" + Environment.NewLine;
+        var shellLink = (IShellLinkW)Activator.CreateInstance(
+            Type.GetTypeFromCLSID(ClsidShellLink)!)!;
 
-        if (icon is not null)
+        try
         {
-            content +=
-                $"IconFile={icon}" + Environment.NewLine +
-                "IconIndex=0" + Environment.NewLine;
-        }
+            shellLink.SetPath(target);
+            shellLink.SetWorkingDirectory(workingDirectory);
+            shellLink.SetDescription(description);
+            shellLink.SetShowCmd(1);
 
-        File.WriteAllText(path, content);
+            if (icon is not null)
+            {
+                shellLink.SetIconLocation(icon, 0);
+            }
+
+            ((IPersistFile)shellLink).Save(path, false);
+        }
+        finally
+        {
+            Marshal.FinalReleaseComObject(shellLink);
+        }
     }
+}
+
+/// <summary>
+/// Shell's <c>IShellLinkW</c> interface used to create real shortcuts.
+/// </summary>
+[ComImport]
+[Guid("000214F9-0000-0000-C000-000000000046")]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal interface IShellLinkW
+{
+    void GetPath(
+        [Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszFile,
+        int cch,
+        IntPtr pfd,
+        int fFlags);
+
+    void GetIDList(out IntPtr ppidl);
+    void SetIDList(IntPtr pidl);
+
+    void GetDescription(
+        [Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszName,
+        int cch);
+
+    void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string pszName);
+
+    void GetWorkingDirectory(
+        [Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszDir,
+        int cch);
+
+    void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string pszDir);
+
+    void GetArguments(
+        [Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszArgs,
+        int cch);
+
+    void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string pszArgs);
+
+    void GetHotkey(out short pwHotkey);
+    void SetHotkey(short wHotkey);
+
+    void GetShowCmd(out int piShowCmd);
+    void SetShowCmd(int iShowCmd);
+
+    void GetIconLocation(
+        [Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszIconPath,
+        int cch,
+        out int piIcon);
+
+    void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string pszIconPath, int iIcon);
+
+    void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string pszPathRel, int dwReserved);
+
+    void Resolve(IntPtr hwnd, int fFlags);
+
+    void SetPath([MarshalAs(UnmanagedType.LPWStr)] string pszFile);
 }

@@ -19,4 +19,4 @@ The output is one EXE: a self-contained WPF setup host followed by a standard ZI
 
 ## MVP limitations
 
-Only `perUser` is supported. Existing installations are replaced in place; this is not a differential updater. `.url` shortcuts are used for a small dependency-free implementation. The sample does not include the proprietary OD.HarmoTools published output, so add it before an end-to-end test.
+Only `perUser` is supported. Existing installations are replaced in place; this is not a differential updater. Shortcuts are real `.lnk` files created through the shell's COM interface, with the working directory set so applications that depend on their own folder start correctly. The sample does not include the proprietary OD.HarmoTools published output, so add it before an end-to-end test.

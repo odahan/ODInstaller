@@ -39,44 +39,68 @@ public static class PackageFormat
         string? welcomeImage,
         string? icon)
     {
-        // Copy the host executable as the base of the generated installer.
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
-        File.Copy(host, output, true);
 
-        // Build the ZIP payload in memory before appending it to the executable.
-        using var payload = new MemoryStream();
-        using (var zip = new ZipArchive(payload, ZipArchiveMode.Create, true))
+        // Build the archive in a temporary file first so a failure cannot
+        // leave a corrupt installer behind, then move it into place.
+        var temporary = output + ".tmp-" + Guid.NewGuid().ToString("N");
+
+        try
         {
-            Add(zip, normalizedManifest, "installer.json");
-            Add(zip, license, "LICENSE.txt");
-            Add(zip, uninstaller, "uninstaller/OD.Installer.Uninstaller.exe");
+            File.Copy(host, temporary);
 
-            if (!string.IsNullOrWhiteSpace(welcomeImage))
+            using (var stream = new FileStream(
+                       temporary,
+                       FileMode.Open,
+                       FileAccess.ReadWrite,
+                       FileShare.None))
             {
-                Add(zip, welcomeImage, "welcome.png");
+                // Position at the end of the copied host, then stream the ZIP
+                // payload directly to disk (no in-memory copy of the archive).
+                stream.Seek(0, SeekOrigin.End);
+
+                using (var zip = new ZipArchive(
+                           stream,
+                           ZipArchiveMode.Create,
+                           leaveOpen: true))
+                {
+                    Add(zip, normalizedManifest, "installer.json");
+                    Add(zip, license, "LICENSE.txt");
+                    Add(zip, uninstaller, "uninstaller/OD.Installer.Uninstaller.exe");
+
+                    if (!string.IsNullOrWhiteSpace(welcomeImage))
+                    {
+                        Add(zip, welcomeImage, "welcome.png");
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(icon))
+                    {
+                        Add(zip, icon, "application.ico");
+                    }
+
+                    foreach (var file in FileInventory.Enumerate(source))
+                    {
+                        Add(zip, Path.Combine(source, file), "app/" + file.Replace('\\', '/'));
+                    }
+                }
+
+                // After the ZIP is finalized, append the footer:
+                // the marker followed by the payload length.
+                var payloadLength = stream.Position;
+                stream.Write(Marker);
+
+                Span<byte> length = stackalloc byte[8];
+                BinaryPrimitives.WriteInt64LittleEndian(length, payloadLength);
+                stream.Write(length);
             }
 
-            if (!string.IsNullOrWhiteSpace(icon))
-            {
-                Add(zip, icon, "application.ico");
-            }
-
-            foreach (var file in FileInventory.Enumerate(source))
-            {
-                Add(zip, Path.Combine(source, file), "app/" + file.Replace('\\', '/'));
-            }
+            File.Move(temporary, output, true);
         }
-
-        // Append the payload bytes, the marker, and the payload length (as a footer)
-        // so the payload can be located and extracted from the end of the file.
-        var bytes = payload.ToArray();
-        using var stream = new FileStream(output, FileMode.Append, FileAccess.Write);
-        stream.Write(bytes);
-        stream.Write(Marker);
-
-        Span<byte> length = stackalloc byte[8];
-        BinaryPrimitives.WriteInt64LittleEndian(length, bytes.Length);
-        stream.Write(length);
+        catch
+        {
+            File.Delete(temporary);
+            throw;
+        }
     }
 
     /// <summary>
@@ -89,10 +113,15 @@ public static class PackageFormat
     /// </exception>
     public static Stream OpenPayload(string executable)
     {
-        var stream = new FileStream(executable, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var stream = new FileStream(
+            executable,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read);
 
         if (stream.Length < 16)
         {
+            stream.Dispose();
             throw new InvalidDataException("Installer payload is missing.");
         }
 
@@ -103,6 +132,7 @@ public static class PackageFormat
 
         if (!footer.AsSpan(0, 8).SequenceEqual(Marker))
         {
+            stream.Dispose();
             throw new InvalidDataException("Installer payload marker is invalid.");
         }
 
@@ -110,17 +140,16 @@ public static class PackageFormat
 
         if (length <= 0 || length > stream.Length - 16)
         {
+            stream.Dispose();
             throw new InvalidDataException("Installer payload length is invalid.");
         }
 
-        // Copy the payload into memory and dispose of the source stream.
-        stream.Seek(stream.Length - 16 - length, SeekOrigin.Begin);
-        var payload = new MemoryStream();
-        stream.CopyTo(payload, (int)Math.Min(length, 81920));
-        payload.Position = 0;
-        stream.Dispose();
-
-        return payload;
+        // Return a bounded window over the payload so the ZIP is read without
+        // copying the whole archive into memory. The returned stream owns the
+        // underlying file and disposes it.
+        var start = stream.Length - 16 - length;
+        stream.Seek(start, SeekOrigin.Begin);
+        return new PayloadStream(stream, start, length);
     }
 
     /// <summary>
@@ -132,5 +161,84 @@ public static class PackageFormat
         using var input = File.OpenRead(source);
         using var output = entry.Open();
         input.CopyTo(output);
+    }
+
+    /// <summary>
+    /// A read-only window over a portion of an underlying stream, used to
+    /// expose exactly the embedded ZIP payload without loading it into memory.
+    /// </summary>
+    private sealed class PayloadStream : Stream
+    {
+        private readonly Stream _base;
+        private readonly long _start;
+        private readonly long _length;
+        private long _position;
+
+        public PayloadStream(Stream baseStream, long start, long length)
+        {
+            _base = baseStream;
+            _start = start;
+            _length = length;
+        }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => true;
+        public override bool CanWrite => false;
+        public override long Length => _length;
+
+        public override long Position
+        {
+            get => _position;
+            set => _position = value;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var remaining = _length - _position;
+
+            if (remaining <= 0)
+            {
+                return 0;
+            }
+
+            count = (int)Math.Min(count, remaining);
+            _base.Seek(_start + _position, SeekOrigin.Begin);
+            var read = _base.Read(buffer, offset, count);
+            _position += read;
+            return read;
+        }
+
+        public override long Seek(long offset, SeekOrigin origin)
+        {
+            _position = origin switch
+            {
+                SeekOrigin.Begin => offset,
+                SeekOrigin.Current => _position + offset,
+                SeekOrigin.End => _length + offset,
+                _ => throw new ArgumentOutOfRangeException(nameof(origin))
+            };
+
+            return _position;
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override void SetLength(long value) =>
+            throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) =>
+            throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _base.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
     }
 }

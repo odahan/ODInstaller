@@ -164,7 +164,7 @@ internal static class Program
     }
 
     /// <summary>
-    /// Starts a detached command process that deletes the running uninstaller
+    /// Starts a detached process that deletes the running uninstaller
     /// after Windows releases the executable.
     /// </summary>
     /// <param name="ownPath">Path of the running uninstaller.</param>
@@ -173,17 +173,36 @@ internal static class Program
         string ownPath,
         string installDirectory)
     {
-        // The delay gives the current process time to exit before the executable
-        // and its containing directory are removed.
-        Process.Start(
-            new ProcessStartInfo(
-                "cmd.exe",
-                $"/c ping 127.0.0.1 -n 3 > nul & " +
-                $"del /f /q \"{ownPath}\" & " +
-                $"rmdir \"{installDirectory}\"")
-            {
-                CreateNoWindow = true,
-                UseShellExecute = false
-            });
+        // The paths are passed to the child through environment variables so
+        // characters such as spaces, '&' or quotes cannot alter the command.
+        // The script itself is a constant string, making it injection-safe.
+        var process = new ProcessStartInfo(Path.Combine(
+            Environment.SystemDirectory,
+            "WindowsPowerShell",
+            "v1.0",
+            "powershell.exe"))
+        {
+            CreateNoWindow = true,
+            UseShellExecute = false
+        };
+
+        process.Environment["OD_UninstallerPath"] = ownPath;
+        process.Environment["OD_InstallDirectory"] = installDirectory;
+
+        process.ArgumentList.Add("-NoProfile");
+        process.ArgumentList.Add("-NonInteractive");
+        process.ArgumentList.Add("-WindowStyle");
+        process.ArgumentList.Add("Hidden");
+        process.ArgumentList.Add("-Command");
+        process.ArgumentList.Add(
+            "Start-Sleep -Seconds 2; " +
+            "$path = $env:OD_UninstallerPath; " +
+            "for ($i = 0; $i -lt 10 -and (Test-Path -LiteralPath $path); $i++) { " +
+            "  try { Remove-Item -LiteralPath $path -Force -ErrorAction Stop; break } " +
+            "  catch { Start-Sleep -Milliseconds 500 } " +
+            "}; " +
+            "Remove-Item -LiteralPath $env:OD_InstallDirectory -Recurse -Force -ErrorAction SilentlyContinue");
+
+        Process.Start(process);
     }
 }

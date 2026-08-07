@@ -66,6 +66,10 @@ internal static class Program
                 "--force",
                 StringComparer.OrdinalIgnoreCase);
 
+            var verbose = args.Contains(
+                "--verbose",
+                StringComparer.OrdinalIgnoreCase);
+
             if (File.Exists(outputPath) && !forceOverwrite)
             {
                 throw new IOException(
@@ -103,10 +107,28 @@ internal static class Program
                 manifest.License.File,
                 root)!;
 
-            var fileCount = FileInventory.Enumerate(sourcePath).Count;
+            var appFiles = FileInventory.Enumerate(sourcePath);
+
+            if (verbose)
+            {
+                Console.WriteLine($"Manifest: {manifestPath}");
+                Console.WriteLine($"Output: {outputPath}");
+                Console.WriteLine($"Source: {sourcePath}");
+                Console.WriteLine($"License: {licensePath}");
+                Console.WriteLine($"Setup host: {setupPath}");
+                Console.WriteLine($"Uninstaller: {uninstallerPath}");
+            }
 
             Console.WriteLine(
-                $"Including {fileCount} application files.");
+                $"Including {appFiles.Count} application files.");
+
+            if (verbose)
+            {
+                foreach (var file in appFiles)
+                {
+                    Console.WriteLine($"  {file}");
+                }
+            }
 
             // Store a normalized copy of the manifest in the temporary directory.
             var normalizedManifestPath = Path.Combine(
@@ -171,7 +193,8 @@ internal static class Program
     /// <param name="args">Command-line arguments.</param>
     /// <param name="name">Option name to find.</param>
     /// <returns>
-    /// The option value, or <see langword="null"/> when the option is missing.
+    /// The option value, or <see langword="null"/> when the option is missing
+    /// or is immediately followed by another option.
     /// </returns>
     private static string? Option(
         string[] args,
@@ -184,9 +207,14 @@ internal static class Program
                 name,
                 StringComparison.OrdinalIgnoreCase));
 
-        return index >= 0 && index + 1 < args.Length
-            ? args[index + 1]
-            : null;
+        if (index < 0 || index + 1 >= args.Length)
+        {
+            return null;
+        }
+
+        // Do not treat a following option as the value of this option.
+        var value = args[index + 1];
+        return value.StartsWith('-') ? null : value;
     }
 
     /// <summary>

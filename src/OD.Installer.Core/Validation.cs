@@ -32,9 +32,12 @@ public static class ManifestValidator
             errors.Add("application.id is required and must be a valid key.");
         }
 
-        if (string.IsNullOrWhiteSpace(manifest.Application.Name))
+        if (string.IsNullOrWhiteSpace(manifest.Application.Name)
+            || manifest.Application.Name.IndexOfAny(
+                Path.GetInvalidFileNameChars()) >= 0)
         {
-            errors.Add("application.name is required.");
+            errors.Add(
+                "application.name is required and must be a valid file name.");
         }
 
         if (!Version.TryParse(manifest.Application.Version, out _))
@@ -75,11 +78,12 @@ public static class ManifestValidator
             errors.Add("application.executable is missing from source.directory.");
         }
 
-        if (manifest.License.RequireAcceptance
-            && (ResolveManifestPath(manifest.License.File, manifestDirectory) is not string license
-                || !File.Exists(license)))
+        // The license file is always packaged as LICENSE.txt and presented in
+        // the wizard, so it must exist even when acceptance is not mandatory.
+        if (ResolveManifestPath(manifest.License.File, manifestDirectory) is not string license
+            || !File.Exists(license))
         {
-            errors.Add("license.file must be an existing file when acceptance is required.");
+            errors.Add("license.file must be an existing file.");
         }
 
         if (!string.IsNullOrWhiteSpace(manifest.Application.WelcomeImage))

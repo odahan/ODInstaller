@@ -19,23 +19,35 @@ public static class FileInventory
     {
         var result = new List<string>();
 
-        foreach (var file in Directory.EnumerateFiles(
-                     source,
-                     "*",
-                     SearchOption.AllDirectories))
+        // Walk the tree manually so reparse points are rejected before any
+        // of their contents is enumerated. Directory.EnumerateFiles with
+        // SearchOption.AllDirectories would silently traverse junctions.
+        void Walk(string directory)
         {
-            var attributes = File.GetAttributes(file);
-
-            // Junction points and symbolic links are rejected
-            // to avoid escaping the source directory.
-            if ((attributes & FileAttributes.ReparsePoint) != 0)
+            foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
             {
-                throw new InvalidDataException(
-                    $"Reparse point not allowed: {file}");
-            }
+                var attributes = File.GetAttributes(entry);
 
-            result.Add(Path.GetRelativePath(source, file));
+                // Junction points and symbolic links are rejected
+                // to avoid escaping the source directory.
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                {
+                    throw new InvalidDataException(
+                        $"Reparse point not allowed: {entry}");
+                }
+
+                if ((attributes & FileAttributes.Directory) != 0)
+                {
+                    Walk(entry);
+                }
+                else
+                {
+                    result.Add(Path.GetRelativePath(source, entry));
+                }
+            }
         }
+
+        Walk(source);
 
         // A collision can occur on case-insensitive file systems.
         if (result.Distinct(StringComparer.OrdinalIgnoreCase).Count()

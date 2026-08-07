@@ -43,6 +43,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         Loaded += (_, _) => LoadPackage();
+        Closed += (_, _) => CleanupPayloadDirectory();
     }
 
     /// <summary>
@@ -83,7 +84,14 @@ public partial class MainWindow : Window
 
             if (File.Exists(welcomeImage))
             {
-                WelcomeImage.Source = new BitmapImage(new Uri(welcomeImage));
+                // Load the image fully so the temporary file is not kept locked
+                // and the payload directory can be removed on close.
+                var image = new BitmapImage();
+                image.BeginInit();
+                image.CacheOption = BitmapCacheOption.OnLoad;
+                image.UriSource = new Uri(welcomeImage);
+                image.EndInit();
+                WelcomeImage.Source = image;
             }
 
             // Resolve the default installation directory and shortcut selections.
@@ -113,7 +121,7 @@ public partial class MainWindow : Window
     private void ShowPage()
     {
         LicensePanel.Visibility = DirectoryBox.Visibility = AcceptBox.Visibility =
-            StartMenuBox.Visibility = DesktopBox.Visibility = Progress.Visibility =
+            StartMenuBox.Visibility = DesktopBox.Visibility =
             WelcomeImage.Visibility = Visibility.Collapsed;
 
         WelcomePanel.Visibility = Visibility.Collapsed;
@@ -233,8 +241,21 @@ public partial class MainWindow : Window
 
         if (_page == 5)
         {
-            Process.Start(new ProcessStartInfo(
-                Path.Combine(_installDirectory, _manifest.Application.Executable))
+            var executablePath = Path.Combine(
+                _installDirectory,
+                _manifest.Application.Executable);
+
+            if (!File.Exists(executablePath))
+            {
+                MessageBox.Show(
+                    $"The application executable was not found:\n{executablePath}",
+                    "Setup",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            Process.Start(new ProcessStartInfo(executablePath)
             {
                 UseShellExecute = true
             });
@@ -409,6 +430,30 @@ public partial class MainWindow : Window
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             File.Copy(file, destination, true);
             created.Add(relative);
+        }
+    }
+
+    /// <summary>
+    /// Removes the temporary payload directory extracted at startup. Called
+    /// when the window closes, whether the installation succeeded or failed.
+    /// </summary>
+    private void CleanupPayloadDirectory()
+    {
+        try
+        {
+            if (!string.IsNullOrEmpty(_payloadDirectory) &&
+                Directory.Exists(_payloadDirectory))
+            {
+                Directory.Delete(_payloadDirectory, true);
+            }
+        }
+        catch (IOException)
+        {
+            // A file is still locked; the temporary directory is left behind.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Best-effort cleanup.
         }
     }
 }

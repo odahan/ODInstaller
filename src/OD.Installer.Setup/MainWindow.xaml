@@ -204,14 +204,6 @@
                         Content="Create a desktop shortcut."
                         Visibility="Collapsed" />
                 </StackPanel>
-
-                <!-- Reserved for installation progress reporting. -->
-                <ProgressBar
-                    x:Name="Progress"
-                    Grid.Row="2"
-                    Height="20"
-                    Margin="0,20,0,0"
-                    Visibility="Collapsed" />
             </Grid>
         </Grid>
 
