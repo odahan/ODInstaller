@@ -364,54 +364,150 @@ public partial class MainWindow : Window
             return false;
         }
 
-        var createdFiles = new List<string>();
-        var createdDirectories = new List<string>();
-        var createdShortcuts = new List<string>();
+            var createdFiles = new List<string>();
+            var createdDirectories = new List<string>();
+            var createdShortcuts = new List<string>();
+            var externalFiles = new List<string>();
+            var externalDirectories = new List<string>();
 
-        // Snapshot the shortcuts that already exist so rollback only removes
-        // the ones that were actually created by this installation.
-        var plannedShortcuts = ShortcutWriter.GetShortcutPaths(
-            _manifest,
-            StartMenuBox.IsChecked == true,
-            DesktopBox.IsChecked == true);
+            // Snapshot the shortcuts that already exist so rollback only removes
+            // the ones that were actually created by this installation.
+            var plannedShortcuts = ShortcutWriter.GetShortcutPaths(
+                _manifest,
+                StartMenuBox.IsChecked == true,
+                DesktopBox.IsChecked == true);
 
-        var preExistingShortcuts = plannedShortcuts
-            .Where(File.Exists)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var preExistingShortcuts = plannedShortcuts
+                .Where(File.Exists)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        var installDirectoryExisted = Directory.Exists(_installDirectory);
+            var installDirectoryExisted = Directory.Exists(_installDirectory);
 
-        _installCts = new CancellationTokenSource();
+            _installCts = new CancellationTokenSource();
 
-        try
-        {
-            ShowInstalling(true);
-
-            InstallerLog.Info($"Installing to {_installDirectory}.");
-            Directory.CreateDirectory(_installDirectory);
-
-            var appSource = Path.Combine(_payloadDirectory, "app");
-            var total = FileInventory.Enumerate(appSource).Count;
-
-            var progress = new Progress<FileCopyProgress>(update =>
+            try
             {
-                InstallProgress.Value = total == 0
-                    ? 100
-                    : (double)update.Current / total * 100;
-                ProgressText.Text =
-                    $"Copying files ({update.Current} of {total}): {update.RelativePath}";
-            });
+                ShowInstalling(true);
 
-            var copy = await Task.Run(
-                () => FileInventory.CopySafely(
-                    appSource,
-                    _installDirectory,
-                    progress,
-                    _installCts.Token),
-                _installCts.Token);
+                InstallerLog.Info($"Installing to {_installDirectory}.");
 
-            createdFiles.AddRange(copy.Files);
-            createdDirectories.AddRange(copy.CreatedDirectories);
+                // Resolve each source folder against its destination. Folders
+                // mapped to the installation root or to a relative subfolder
+                // are copied inside the install directory; folders mapped to
+                // an absolute destination are copied to their resolved path.
+                var folders = _manifest.Source.EffectiveFolders();
+                var appRoot = Path.Combine(_payloadDirectory, "app");
+                var copies = new List<(string Source, string Target, string Prefix, bool External)>();
+                var total = 0;
+
+                for (var index = 0; index < folders.Count; index++)
+                {
+                    var folder = folders[index];
+
+                    if (SafePaths.IsExternalDestination(folder.Destination))
+                    {
+                        var destination = SafePaths.ResolveInstallDirectory(
+                            folder.Destination,
+                            _manifest.Application.Name);
+
+                        if (!SafePaths.IsCompatibleInstallDirectory(
+                                destination,
+                                _manifest.Application.Id))
+                        {
+                            MessageBox.Show(
+                                "The destination folder already contains files "
+                                + $"that do not belong to {_manifest.Application.Name}:"
+                                + $"\n\n{destination}\n\nChoose an empty folder or the "
+                                + "folder of a previous installation of this application.",
+                                "Setup",
+                                MessageBoxButton.OK,
+                                MessageBoxImage.Warning);
+                            return false;
+                        }
+
+                        var source = Path.Combine(
+                            _payloadDirectory,
+                            "external",
+                            index.ToString());
+
+                        if (Directory.Exists(source))
+                        {
+                            total += FileInventory.Enumerate(source).Count;
+                            copies.Add((source, destination, "", true));
+                        }
+                    }
+                    else
+                    {
+                        var relative = SafePaths.IsRootDestination(folder.Destination)
+                            ? ""
+                            : folder.Destination.Trim('/', '\\');
+
+                        var source = relative.Length == 0
+                            ? appRoot
+                            : Path.Combine(appRoot, relative);
+
+                        var target = relative.Length == 0
+                            ? _installDirectory
+                            : Path.Combine(_installDirectory, relative);
+
+                        if (Directory.Exists(source))
+                        {
+                            total += FileInventory.Enumerate(source).Count;
+                            copies.Add((source, target, relative, false));
+                        }
+                    }
+                }
+
+                Directory.CreateDirectory(_installDirectory);
+
+                IProgress<FileCopyProgress> progress = new Progress<FileCopyProgress>(update =>
+                {
+                    InstallProgress.Value = total == 0
+                        ? 100
+                        : (double)update.Current / total * 100;
+                    ProgressText.Text =
+                        $"Copying files ({update.Current} of {total}): {update.RelativePath}";
+                });
+
+                await Task.Run(
+                    () =>
+                    {
+                        var offset = 0;
+
+                        foreach (var (source, target, prefix, external) in copies)
+                        {
+                            IProgress<FileCopyProgress> folderProgress =
+                                new Progress<FileCopyProgress>(
+                                    update => progress.Report(new FileCopyProgress(
+                                        offset + update.Current,
+                                        total,
+                                        update.RelativePath)));
+
+                            var result = FileInventory.CopySafely(
+                                source,
+                                target,
+                                folderProgress,
+                                _installCts.Token);
+
+                            if (external)
+                            {
+                                externalFiles.AddRange(
+                                    result.Files.Select(file => Path.Combine(target, file)));
+                                externalDirectories.AddRange(result.CreatedDirectories);
+                            }
+                            else
+                            {
+                                createdFiles.AddRange(
+                                    prefix.Length == 0
+                                        ? result.Files
+                                        : result.Files.Select(file => Path.Combine(prefix, file)));
+                                createdDirectories.AddRange(result.CreatedDirectories);
+                            }
+
+                            offset += result.Files.Count;
+                        }
+                    },
+                    _installCts.Token);
 
             var packagedIcon = Path.Combine(_payloadDirectory, "application.ico");
             if (File.Exists(packagedIcon))
@@ -478,6 +574,8 @@ public partial class MainWindow : Window
                         .GetDirectories(_installDirectory, "*", SearchOption.AllDirectories)
                         .Select(x => Path.GetRelativePath(_installDirectory, x))
                         .ToList(),
+                    ExternalFiles = externalFiles,
+                    ExternalDirectories = externalDirectories,
                     Shortcuts = plannedShortcuts,
                     RegistryKeys = [uninstallKey],
                     UninstallerPath = uninstaller
@@ -496,6 +594,8 @@ public partial class MainWindow : Window
                 createdFiles,
                 createdDirectories,
                 createdShortcuts,
+                externalFiles,
+                externalDirectories,
                 uninstallKey);
             MessageBox.Show(
                 "The installation was cancelled.",
@@ -513,6 +613,8 @@ public partial class MainWindow : Window
                 createdFiles,
                 createdDirectories,
                 createdShortcuts,
+                externalFiles,
+                externalDirectories,
                 uninstallKey);
             MessageBox.Show(
                 $"Installation failed:\n\n{ex.Message}",
@@ -551,8 +653,8 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// Removes everything created by a failed or cancelled installation:
-    /// copied files, new shortcuts, newly created directories, and the
-    /// uninstall registry key.
+    /// copied files (inside and outside the install directory), new
+    /// shortcuts, newly created directories, and the uninstall registry key.
     /// </summary>
     /// <param name="installDirectory">Target installation directory.</param>
     /// <param name="installDirectoryExisted">
@@ -561,6 +663,8 @@ public partial class MainWindow : Window
     /// <param name="createdFiles">Relative paths of the copied files.</param>
     /// <param name="createdDirectories">Full paths of the created directories.</param>
     /// <param name="createdShortcuts">Full paths of the created shortcuts.</param>
+    /// <param name="externalFiles">Absolute paths of files copied outside the install directory.</param>
+    /// <param name="externalDirectories">Absolute paths of directories created outside the install directory.</param>
     /// <param name="uninstallKey">Uninstall registry key to remove.</param>
     private static void Rollback(
         string installDirectory,
@@ -568,12 +672,19 @@ public partial class MainWindow : Window
         IEnumerable<string> createdFiles,
         IEnumerable<string> createdDirectories,
         IEnumerable<string> createdShortcuts,
+        IEnumerable<string> externalFiles,
+        IEnumerable<string> externalDirectories,
         string uninstallKey)
     {
         foreach (var relative in createdFiles)
         {
             var path = Path.Combine(installDirectory, relative);
             TryDeleteFile(path);
+        }
+
+        foreach (var file in externalFiles)
+        {
+            TryDeleteFile(file);
         }
 
         foreach (var shortcut in createdShortcuts)
@@ -583,6 +694,7 @@ public partial class MainWindow : Window
 
         // Remove the created directories, deepest first, only when empty.
         foreach (var directory in createdDirectories
+            .Concat(externalDirectories)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderByDescending(directory => directory.Length))
         {

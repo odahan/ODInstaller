@@ -74,6 +74,12 @@ internal static class Program
                 }
             }
 
+            // Remove files installed outside the installation directory.
+            foreach (var path in manifest.ExternalFiles)
+            {
+                TryDelete(path, locked);
+            }
+
             // Remove the installation manifest.
             TryDelete(manifestPath, locked);
 
@@ -89,6 +95,17 @@ internal static class Program
             {
                 var directory = Path.Combine(installDirectory, relativeDirectory);
 
+                if (Directory.Exists(directory) &&
+                    !Directory.EnumerateFileSystemEntries(directory).Any())
+                {
+                    Directory.Delete(directory);
+                }
+            }
+
+            // Remove empty directories created outside the installation directory.
+            foreach (var directory in manifest.ExternalDirectories
+                         .OrderByDescending(directory => directory.Length))
+            {
                 if (Directory.Exists(directory) &&
                     !Directory.EnumerateFileSystemEntries(directory).Any())
                 {

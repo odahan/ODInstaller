@@ -5,6 +5,12 @@ using System.Text;
 namespace OD.Installer.Core;
 
 /// <summary>
+/// Maps a resolved source directory to its installation destination
+/// for packaging.
+/// </summary>
+public sealed record SourceFolderMapping(string SourcePath, string Destination);
+
+/// <summary>
 /// Handles the creation and reading of the self-contained installer package
 /// (a ZIP payload appended at the end of the installer host executable).
 /// </summary>
@@ -43,11 +49,14 @@ public static class PackageFormat
     /// <summary>
     /// Builds the installer executable by copying the host executable and
     /// appending a ZIP payload containing the manifest, license, uninstaller
-    /// and application files.
+    /// and application files. Folders mapped to the installation root or to a
+    /// relative subfolder are stored under <c>app/</c> with their destination
+    /// baked into the entry paths; folders mapped to an absolute destination
+    /// are stored under <c>external/&lt;index&gt;/</c>.
     /// </summary>
     /// <param name="host">Path to the installer host executable template.</param>
     /// <param name="output">Path of the installer executable to generate.</param>
-    /// <param name="source">Directory containing the application files.</param>
+    /// <param name="sources">Resolved source folders with their destinations.</param>
     /// <param name="normalizedManifest">Path to the normalized manifest file.</param>
     /// <param name="license">Path to the license file.</param>
     /// <param name="uninstaller">Path to the uninstaller executable.</param>
@@ -56,7 +65,7 @@ public static class PackageFormat
     public static void Append(
         string host,
         string output,
-        string source,
+        IReadOnlyList<SourceFolderMapping> sources,
         string normalizedManifest,
         string license,
         string uninstaller,
@@ -102,9 +111,21 @@ public static class PackageFormat
                         Add(zip, icon, "application.ico");
                     }
 
-                    foreach (var file in FileInventory.Enumerate(source))
+                    for (var index = 0; index < sources.Count; index++)
                     {
-                        Add(zip, Path.Combine(source, file), "app/" + file.Replace('\\', '/'));
+                        var mapping = sources[index];
+                        var prefix = SafePaths.IsExternalDestination(mapping.Destination)
+                            ? $"external/{index}"
+                            : SafePaths.IsRootDestination(mapping.Destination)
+                                ? "app"
+                                : "app/" + mapping.Destination
+                                    .Trim('/', '\\')
+                                    .Replace('\\', '/');
+
+                        foreach (var file in FileInventory.Enumerate(mapping.SourcePath))
+                        {
+                            Add(zip, Path.Combine(mapping.SourcePath, file), prefix + "/" + file.Replace('\\', '/'));
+                        }
                     }
                 }
 

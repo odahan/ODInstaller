@@ -1,6 +1,6 @@
 {
   "application": { "id": "OD.HarmoTools", "name": "OD HarmoTools", "version": "1.0.0", "publisher": "Olivier Dahan", "executable": "OD.HarmoTools.exe", "icon": "\\\\nas\\branding\\OD.HarmoTools\\OD.HarmoTools.ico", "welcomeImage": "\\\\nas\\branding\\OD.HarmoTools\\welcome.png" },
-  "source": { "directory": "E:\\HarmoToolsPublish" },
+  "source": { "folders": [ { "directory": "E:\\HarmoToolsPublish", "destination": "." } ] },
   "installation": { "scope": "perUser", "directory": "{LocalAppData}/Programs/OD.HarmoTools", "allowDirectorySelection": true },
   "license": { "file": "F:\\Licences\\OD.HarmoTools-LICENSE.txt", "requireAcceptance": true },
   "shortcuts": { "startMenu": true, "desktop": false },

@@ -1,4 +1,5 @@
 using OD.Installer.Core;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Windows;
@@ -24,12 +25,16 @@ public partial class MainWindow : Window
 
     private List<RecentFile> recentFiles = [];
 
+    // Source folders edited in the list, each with its installation destination.
+    private readonly ObservableCollection<SourceFolderRow> sourceFolders = [];
+
     // Indicates whether the form has unsaved changes.
     private bool isDirty;
 
     public MainWindow()
     {
         InitializeComponent();
+        SourceFoldersList.ItemsSource = sourceFolders;
 
         // Wire up standard application commands (New/Open/Save) to keyboard shortcuts.
         CommandBindings.Add(new System.Windows.Input.CommandBinding(
@@ -71,7 +76,8 @@ public partial class MainWindow : Window
         IconBox.Text = "";
         WelcomeImageBox.Text = "";
 
-        SourceDirectoryBox.Text = "";
+        sourceFolders.Clear();
+        sourceFolders.Add(new SourceFolderRow { Source = "", Destination = "." });
         InstallationDirectoryBox.Text = "{LocalAppData}/Programs/<Application>";
         AllowDirectorySelectionBox.IsChecked = true;
         LicenseFileBox.Text = "";
@@ -101,7 +107,16 @@ public partial class MainWindow : Window
         },
         Source = new SourceManifest
         {
-            Directory = SourceDirectoryBox.Text.Trim()
+            Folders = sourceFolders
+                .Where(row => !string.IsNullOrWhiteSpace(row.Source))
+                .Select(row => new SourceFolderManifest
+                {
+                    Directory = row.Source.Trim(),
+                    Destination = string.IsNullOrWhiteSpace(row.Destination)
+                        ? "."
+                        : row.Destination.Trim()
+                })
+                .ToList()
         },
         Installation = new InstallationManifest
         {
@@ -141,7 +156,17 @@ public partial class MainWindow : Window
         IconBox.Text = manifest.Application.Icon ?? "";
         WelcomeImageBox.Text = manifest.Application.WelcomeImage ?? "";
 
-        SourceDirectoryBox.Text = manifest.Source.Directory;
+        sourceFolders.Clear();
+
+        foreach (var folder in manifest.Source.EffectiveFolders())
+        {
+            sourceFolders.Add(new SourceFolderRow
+            {
+                Source = folder.Directory,
+                Destination = folder.Destination
+            });
+        }
+
         InstallationDirectoryBox.Text = manifest.Installation.Directory;
         AllowDirectorySelectionBox.IsChecked = manifest.Installation.AllowDirectorySelection;
         LicenseFileBox.Text = manifest.License.File;
@@ -283,9 +308,6 @@ public partial class MainWindow : Window
     }
 
     // Browse button handlers: open the relevant file/folder picker for each field.
-    private void BrowseSource_Click(object sender, RoutedEventArgs e) =>
-        BrowseFolder(SourceDirectoryBox, "Choose the folder containing the application");
-
     private void BrowseOutput_Click(object sender, RoutedEventArgs e) =>
         BrowseFolder(OutputDirectoryBox, "Choose the output folder");
 
@@ -297,6 +319,47 @@ public partial class MainWindow : Window
 
     private void BrowseLicense_Click(object sender, RoutedEventArgs e) =>
         BrowseFile(LicenseFileBox, "Choose the license file", "Text files (*.txt)|*.txt|All files (*.*)|*.*");
+
+    // Adds a new source folder row to the list.
+    private void AddSourceFolder_Click(object sender, RoutedEventArgs e)
+    {
+        sourceFolders.Add(new SourceFolderRow { Source = "", Destination = "." });
+        MarkDirty();
+    }
+
+    // Removes the source folder row whose Remove button was clicked.
+    private void RemoveSourceFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is SourceFolderRow row)
+        {
+            sourceFolders.Remove(row);
+            MarkDirty();
+        }
+    }
+
+    // Opens the folder picker for the source folder of the clicked row.
+    private void BrowseSourceFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not SourceFolderRow row)
+        {
+            return;
+        }
+
+        using var dialog = new Forms.FolderBrowserDialog
+        {
+            Description = "Choose the folder containing the application files",
+            UseDescriptionForTitle = true,
+            InitialDirectory = Directory.Exists(row.Source)
+                ? row.Source
+                : Environment.CurrentDirectory
+        };
+
+        if (dialog.ShowDialog() == Forms.DialogResult.OK)
+        {
+            row.Source = dialog.SelectedPath;
+            MarkDirty();
+        }
+    }
 
     // Shows a folder browser dialog and writes the selected path into the target text box.
     private void BrowseFolder(System.Windows.Controls.TextBox target, string description)
@@ -501,4 +564,47 @@ public partial class MainWindow : Window
     }
 
     private sealed record RecentFile(string Path, DateTimeOffset LastUsed);
+
+    // One editable source folder row of the list, with its destination.
+    private sealed class SourceFolderRow : INotifyPropertyChanged
+    {
+        private string source = "";
+        private string destination = ".";
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        public string Source
+        {
+            get => source;
+            set
+            {
+                if (source == value)
+                {
+                    return;
+                }
+
+                source = value;
+                PropertyChanged?.Invoke(
+                    this,
+                    new PropertyChangedEventArgs(nameof(Source)));
+            }
+        }
+
+        public string Destination
+        {
+            get => destination;
+            set
+            {
+                if (destination == value)
+                {
+                    return;
+                }
+
+                destination = value;
+                PropertyChanged?.Invoke(
+                    this,
+                    new PropertyChangedEventArgs(nameof(Destination)));
+            }
+        }
+    }
 }

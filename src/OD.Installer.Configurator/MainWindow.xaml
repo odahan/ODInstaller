@@ -54,8 +54,21 @@
 
         <GroupBox Header="Files and installation" Margin="0,0,0,16">
           <StackPanel Margin="14">
-            <TextBlock Text="Source folder" Style="{StaticResource FieldLabel}" Margin="0,0,0,5" />
-            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBox x:Name="SourceDirectoryBox" /><Button Grid.Column="1" Content="Browse..." Margin="8,0,0,0" Click="BrowseSource_Click" /></Grid>
+            <TextBlock Text="Source folders" Style="{StaticResource FieldLabel}" Margin="0,0,0,5" />
+            <ItemsControl x:Name="SourceFoldersList" Margin="0,0,0,8">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Grid Margin="0,0,0,6">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <TextBox Text="{Binding Source, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" ToolTip="Source folder to package, for example E:\Publish" />
+                    <Button Grid.Column="1" Content="Browse..." Margin="8,0,0,0" Click="BrowseSourceFolder_Click" />
+                    <TextBox Grid.Column="2" Text="{Binding Destination, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="8,0,0,0" ToolTip="Installation destination: '.' or empty for the installation root, a relative subfolder, or an absolute path with {LocalAppData} and &lt;Application&gt;." />
+                    <Button Grid.Column="3" Content="Remove" Margin="8,0,0,0" Click="RemoveSourceFolder_Click" />
+                  </Grid>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <Button Content="Add source folder..." Margin="0,0,0,12" Click="AddSourceFolder_Click" />
             <TextBlock Text="Installation folder" Style="{StaticResource FieldLabel}" /><TextBox x:Name="InstallationDirectoryBox" ToolTip="Use {LocalAppData} and &lt;Application&gt; if desired." />
             <CheckBox x:Name="AllowDirectorySelectionBox" Content="Let the user choose the installation folder" Margin="0,12,0,0" />
             <TextBlock Text="License file" Style="{StaticResource FieldLabel}" />

@@ -105,36 +105,52 @@ internal static class Program
                     + "before building packages.");
             }
 
-            var sourcePath = ManifestValidator.ResolveManifestPath(
-                manifest.Source.Directory,
-                root)!;
+            var folders = manifest.Source.EffectiveFolders();
+            var mappings = new List<SourceFolderMapping>(folders.Count);
+            var appFileCount = 0;
+
+            for (var index = 0; index < folders.Count; index++)
+            {
+                var folder = folders[index];
+
+                var sourcePath = ManifestValidator.ResolveManifestPath(
+                    folder.Directory,
+                    root)
+                    ?? throw new InvalidDataException(
+                        $"source.folders[{index}].directory is invalid.");
+
+                mappings.Add(new SourceFolderMapping(sourcePath, folder.Destination));
+
+                var files = FileInventory.Enumerate(sourcePath);
+                appFileCount += files.Count;
+
+                if (parsed.Verbose)
+                {
+                    Console.WriteLine(
+                        $"Source: {sourcePath} -> {folder.Destination}");
+
+                    foreach (var file in files)
+                    {
+                        Console.WriteLine($"  {file}");
+                    }
+                }
+            }
 
             var licensePath = ManifestValidator.ResolveManifestPath(
                 manifest.License.File,
                 root)!;
 
-            var appFiles = FileInventory.Enumerate(sourcePath);
-
             if (parsed.Verbose)
             {
                 Console.WriteLine($"Manifest: {manifestPath}");
                 Console.WriteLine($"Output: {outputPath}");
-                Console.WriteLine($"Source: {sourcePath}");
                 Console.WriteLine($"License: {licensePath}");
                 Console.WriteLine($"Setup host: {setupPath}");
                 Console.WriteLine($"Uninstaller: {uninstallerPath}");
             }
 
             Console.WriteLine(
-                $"Including {appFiles.Count} application files.");
-
-            if (parsed.Verbose)
-            {
-                foreach (var file in appFiles)
-                {
-                    Console.WriteLine($"  {file}");
-                }
-            }
+                $"Including {appFileCount} application files.");
 
             // Store a normalized copy of the manifest in the temporary directory.
             var normalizedManifestPath = Path.Combine(
@@ -168,7 +184,7 @@ internal static class Program
                 PackageFormat.Append(
                     setupPath,
                     outputPath,
-                    sourcePath,
+                    mappings,
                     normalizedManifestPath,
                     licensePath,
                     uninstallerPath,

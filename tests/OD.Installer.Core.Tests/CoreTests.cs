@@ -430,6 +430,166 @@ public sealed class CoreTests
         finally { Directory.Delete(root, true); }
     }
 
+    [Fact]
+    public void SafePaths_IsSafeDestination_AcceptsRootRelativeAndAbsolute()
+    {
+        Assert.True(SafePaths.IsSafeDestination(""));
+        Assert.True(SafePaths.IsSafeDestination("."));
+        Assert.True(SafePaths.IsSafeDestination("plugins"));
+        Assert.True(SafePaths.IsSafeDestination("plugins/nested"));
+        Assert.True(SafePaths.IsSafeDestination(Path.Combine(Path.GetTempPath(), "Assets")));
+        Assert.True(SafePaths.IsSafeDestination("{LocalAppData}/Programs/Assets"));
+        Assert.False(SafePaths.IsSafeDestination("..\\plugins"));
+        Assert.False(SafePaths.IsSafeDestination(".\\plugins"));
+        Assert.False(SafePaths.IsSafeDestination(Path.Combine(Path.GetTempPath(), "..", "Assets")));
+        Assert.False(SafePaths.IsSafeDestination("relative\\..\\Assets"));
+        Assert.False(SafePaths.IsSafeDestination("\\server\\share"));
+    }
+
+    [Fact]
+    public void SafePaths_IsExternalDestination_ClassifiesDestinations()
+    {
+        Assert.False(SafePaths.IsExternalDestination(""));
+        Assert.False(SafePaths.IsExternalDestination("."));
+        Assert.False(SafePaths.IsExternalDestination("plugins"));
+        Assert.True(SafePaths.IsExternalDestination(Path.Combine(Path.GetTempPath(), "Assets")));
+        Assert.True(SafePaths.IsExternalDestination("{LocalAppData}/Programs/Assets"));
+    }
+
+    [Fact]
+    public void ManifestValidator_AcceptsMultipleSourceFolders()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            var main = Path.Combine(root, "main");
+            var plugins = Path.Combine(root, "plugins-src");
+            Directory.CreateDirectory(Path.Combine(main, "sub"));
+            Directory.CreateDirectory(plugins);
+            File.WriteAllText(Path.Combine(main, "sub", "Test.exe"), "x");
+            File.WriteAllText(Path.Combine(plugins, "plug.txt"), "x");
+            File.WriteAllText(Path.Combine(root, "LICENSE.txt"), "x");
+
+            var manifest = new InstallerManifest
+            {
+                Application = new ApplicationManifest { Id = "test", Name = "Test", Version = "1.0", Executable = Path.Combine("sub", "Test.exe") },
+                Source = new SourceManifest
+                {
+                    Folders =
+                    [
+                        new SourceFolderManifest { Directory = main, Destination = "." },
+                        new SourceFolderManifest { Directory = plugins, Destination = "plugins" }
+                    ]
+                },
+                Installation = new InstallationManifest { Directory = "{LocalAppData}/Programs/Test" },
+                License = new LicenseManifest { File = Path.Combine(root, "LICENSE.txt") },
+                Output = new OutputManifest { Directory = root, FileName = "test.exe" }
+            };
+
+            Assert.True(ManifestValidator.Validate(manifest, root).IsValid);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void ManifestValidator_RejectsUnsafeFolderDestination()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            var main = Path.Combine(root, "main");
+            Directory.CreateDirectory(main);
+            File.WriteAllText(Path.Combine(main, "test.exe"), "x");
+            File.WriteAllText(Path.Combine(root, "LICENSE.txt"), "x");
+
+            var manifest = new InstallerManifest
+            {
+                Application = new ApplicationManifest { Id = "test", Name = "Test", Version = "1.0", Executable = "test.exe" },
+                Source = new SourceManifest
+                {
+                    Folders =
+                    [
+                        new SourceFolderManifest { Directory = main, Destination = "." },
+                        new SourceFolderManifest { Directory = main, Destination = "..\\plugins" }
+                    ]
+                },
+                Installation = new InstallationManifest { Directory = "{LocalAppData}/Programs/Test" },
+                License = new LicenseManifest { File = Path.Combine(root, "LICENSE.txt") },
+                Output = new OutputManifest { Directory = root, FileName = "test.exe" }
+            };
+
+            var result = ManifestValidator.Validate(manifest, root);
+            Assert.Contains(result.Errors, x => x.Contains("destination", StringComparison.Ordinal));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void ManifestValidator_RejectsCollidingSourceFolders()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            var main = Path.Combine(root, "main");
+            var plugins = Path.Combine(root, "plugins-src");
+            Directory.CreateDirectory(Path.Combine(main, "plugins"));
+            Directory.CreateDirectory(plugins);
+            File.WriteAllText(Path.Combine(main, "test.exe"), "x");
+            File.WriteAllText(Path.Combine(main, "plugins", "plug.txt"), "x");
+            File.WriteAllText(Path.Combine(plugins, "plug.txt"), "x");
+            File.WriteAllText(Path.Combine(root, "LICENSE.txt"), "x");
+
+            var manifest = new InstallerManifest
+            {
+                Application = new ApplicationManifest { Id = "test", Name = "Test", Version = "1.0", Executable = "test.exe" },
+                Source = new SourceManifest
+                {
+                    Folders =
+                    [
+                        new SourceFolderManifest { Directory = main, Destination = "." },
+                        new SourceFolderManifest { Directory = plugins, Destination = "plugins" }
+                    ]
+                },
+                Installation = new InstallationManifest { Directory = "{LocalAppData}/Programs/Test" },
+                License = new LicenseManifest { File = Path.Combine(root, "LICENSE.txt") },
+                Output = new OutputManifest { Directory = root, FileName = "test.exe" }
+            };
+
+            var result = ManifestValidator.Validate(manifest, root);
+            Assert.Contains(result.Errors, x => x.Contains("collision", StringComparison.Ordinal));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void ManifestValidator_RequiresAFolderMappedToTheRoot()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            var plugins = Path.Combine(root, "plugins-src");
+            Directory.CreateDirectory(plugins);
+            File.WriteAllText(Path.Combine(plugins, "plug.txt"), "x");
+            File.WriteAllText(Path.Combine(root, "LICENSE.txt"), "x");
+
+            var manifest = new InstallerManifest
+            {
+                Application = new ApplicationManifest { Id = "test", Name = "Test", Version = "1.0", Executable = "plug.txt" },
+                Source = new SourceManifest
+                {
+                    Folders = [new SourceFolderManifest { Directory = plugins, Destination = "plugins" }]
+                },
+                Installation = new InstallationManifest { Directory = "{LocalAppData}/Programs/Test" },
+                License = new LicenseManifest { File = Path.Combine(root, "LICENSE.txt") },
+                Output = new OutputManifest { Directory = root, FileName = "test.exe" }
+            };
+
+            var result = ManifestValidator.Validate(manifest, root);
+            Assert.Contains(result.Errors, x => x.Contains("installation root", StringComparison.Ordinal));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     private sealed class CollectingProgress<T> : IProgress<T>
     {
         public List<T> Values { get; } = [];

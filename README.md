@@ -17,6 +17,10 @@ The output is one EXE: a self-contained WPF setup host followed by a standard ZI
 
 `Core` contains models, validation, file and package safety; `Configurator` creates and edits installer JSON files; `Builder` makes the package; `Setup` installs it; `Uninstaller` removes only files listed in the local manifest. Tests cover core behaviour and builder validation.
 
+## Multiple source folders
+
+`source.folders` maps several source directories to their installation destinations: `"."` (or empty) for the installation root, a relative subfolder of the root, or an absolute path on the target machine (with the `{LocalAppData}` and `<Application>` placeholders). The application executable must live in a folder mapped to `"."`. The legacy `source.directory` field is still accepted and behaves as a single folder mapped to `"."`. Absolute destinations must be empty or contain a previous installation of the same application, exactly like the root folder.
+
 ## MVP limitations
 
 Only `perUser` is supported. Existing installations are replaced in place; this is not a differential updater. Shortcuts are real `.lnk` files created through the shell's COM interface, with the working directory set so applications that depend on their own folder start correctly. The sample does not include the proprietary OD.HarmoTools published output, so add it before an end-to-end test.

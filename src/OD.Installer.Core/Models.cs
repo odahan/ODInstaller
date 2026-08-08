@@ -81,14 +81,52 @@ public sealed class ApplicationManifest
 }
 
 /// <summary>
-/// Describes the directory containing the application files.
+/// Describes the directories containing the application files and where
+/// their content is installed.
 /// </summary>
 public sealed class SourceManifest
 {
     /// <summary>
-    /// Path of the source directory.
+    /// Legacy path of the main source directory, mapped to the installation
+    /// root. Used only when <see cref="Folders"/> is empty.
     /// </summary>
     public string Directory { get; init; } = string.Empty;
+
+    /// <summary>
+    /// List of source folders with their installation destinations. When
+    /// non-empty, this list takes precedence over <see cref="Directory"/>.
+    /// </summary>
+    public List<SourceFolderManifest> Folders { get; init; } = [];
+
+    /// <summary>
+    /// Returns the source folders to install: the <see cref="Folders"/> list
+    /// when non-empty, otherwise the legacy <see cref="Directory"/> mapped to
+    /// the installation root.
+    /// </summary>
+    public IReadOnlyList<SourceFolderManifest> EffectiveFolders() =>
+        Folders.Count > 0
+            ? Folders
+            : [new SourceFolderManifest { Directory = Directory, Destination = "." }];
+}
+
+/// <summary>
+/// Describes a single source folder and its installation destination.
+/// </summary>
+public sealed class SourceFolderManifest
+{
+    /// <summary>
+    /// Path of the source directory, resolved relative to the manifest or
+    /// as an absolute path.
+    /// </summary>
+    public string Directory { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Installation destination: <c>.</c> or empty for the installation
+    /// root, a relative subfolder of the installation root, or an absolute
+    /// path (possibly containing the <c>{LocalAppData}</c> and
+    /// <c>&lt;Application&gt;</c> placeholders).
+    /// </summary>
+    public string Destination { get; init; } = string.Empty;
 }
 
 /// <summary>
@@ -181,14 +219,24 @@ public sealed class InstalledManifest
     public string InstallDirectory { get; init; } = string.Empty;
 
     /// <summary>
-    /// List of installed files.
+    /// List of installed files, relative to the installation directory.
     /// </summary>
     public List<string> Files { get; init; } = [];
 
     /// <summary>
-    /// List of created directories.
+    /// List of created directories, relative to the installation directory.
     /// </summary>
     public List<string> Directories { get; init; } = [];
+
+    /// <summary>
+    /// List of files installed outside the installation directory (absolute paths).
+    /// </summary>
+    public List<string> ExternalFiles { get; init; } = [];
+
+    /// <summary>
+    /// List of directories created outside the installation directory (absolute paths).
+    /// </summary>
+    public List<string> ExternalDirectories { get; init; } = [];
 
     /// <summary>
     /// List of created shortcuts.

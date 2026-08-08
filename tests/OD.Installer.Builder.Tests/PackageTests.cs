@@ -34,7 +34,7 @@ public sealed class PackageTests
             var output = Path.Combine(temp, "setup.exe");
 
             PackageFormat.Append(
-                host, output, source, manifest, license, uninstaller, null, null);
+                host, output, [new SourceFolderMapping(source, ".")], manifest, license, uninstaller, null, null);
 
             var extractDirectory = Path.Combine(temp, "extracted");
             Directory.CreateDirectory(extractDirectory);
@@ -53,6 +53,70 @@ public sealed class PackageTests
             Assert.True(File.Exists(Path.Combine(extractDirectory, "installer.json")));
             Assert.True(File.Exists(
                 Path.Combine(extractDirectory, "uninstaller", "OD.Installer.Uninstaller.exe")));
+        }
+        finally { Directory.Delete(temp, true); }
+    }
+
+    [Fact]
+    public void PackageFormat_AppendOpenExtract_MapsMultipleSources()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            var rootSource = Path.Combine(temp, "root");
+            Directory.CreateDirectory(rootSource);
+            File.WriteAllText(Path.Combine(rootSource, "app.exe"), "root");
+
+            var relativeSource = Path.Combine(temp, "plugins");
+            Directory.CreateDirectory(Path.Combine(relativeSource, "nested"));
+            File.WriteAllText(Path.Combine(relativeSource, "nested", "plug.txt"), "plugin");
+
+            var externalSource = Path.Combine(temp, "assets");
+            Directory.CreateDirectory(externalSource);
+            File.WriteAllText(Path.Combine(externalSource, "asset.txt"), "asset");
+
+            var manifest = Path.Combine(temp, "installer.json");
+            File.WriteAllText(manifest, "{}");
+            var license = Path.Combine(temp, "LICENSE.txt");
+            File.WriteAllText(license, "license text");
+            var uninstaller = Path.Combine(temp, "uninstaller.exe");
+            File.WriteAllText(uninstaller, "uninstaller bytes");
+
+            var host = Path.Combine(temp, "host.exe");
+            File.WriteAllText(host, "HOST");
+            var output = Path.Combine(temp, "setup.exe");
+
+            PackageFormat.Append(
+                host,
+                output,
+                [
+                    new SourceFolderMapping(rootSource, "."),
+                    new SourceFolderMapping(relativeSource, "plugins"),
+                    new SourceFolderMapping(externalSource, "{LocalAppData}/Assets")
+                ],
+                manifest,
+                license,
+                uninstaller,
+                null,
+                null);
+
+            var extractDirectory = Path.Combine(temp, "extracted");
+            Directory.CreateDirectory(extractDirectory);
+
+            using (var payload = PackageFormat.OpenPayload(output))
+            {
+                FileInventory.ExtractSafely(payload, extractDirectory);
+            }
+
+            Assert.Equal(
+                "root",
+                File.ReadAllText(Path.Combine(extractDirectory, "app", "app.exe")));
+            Assert.Equal(
+                "plugin",
+                File.ReadAllText(Path.Combine(extractDirectory, "app", "plugins", "nested", "plug.txt")));
+            Assert.Equal(
+                "asset",
+                File.ReadAllText(Path.Combine(extractDirectory, "external", "2", "asset.txt")));
         }
         finally { Directory.Delete(temp, true); }
     }
@@ -130,7 +194,7 @@ public sealed class PackageTests
             var host = Path.Combine(temp, "host.exe");
             File.WriteAllText(host, "HOST");
             var output = Path.Combine(temp, "setup.exe");
-            PackageFormat.Append(host, output, source, manifest, license, uninstaller, null, null);
+            PackageFormat.Append(host, output, [new SourceFolderMapping(source, ".")], manifest, license, uninstaller, null, null);
 
             var signature = new byte[512];
             Random.Shared.NextBytes(signature);
@@ -174,7 +238,7 @@ public sealed class PackageTests
             var host = Path.Combine(temp, "host.exe");
             File.WriteAllText(host, "HOST");
             var output = Path.Combine(temp, "setup.exe");
-            PackageFormat.Append(host, output, source, manifest, license, uninstaller, null, null);
+            PackageFormat.Append(host, output, [new SourceFolderMapping(source, ".")], manifest, license, uninstaller, null, null);
 
             using (var append = new FileStream(output, FileMode.Append))
             {

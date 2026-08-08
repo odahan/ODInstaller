@@ -38,16 +38,7 @@ public static class ManifestValidator
             errors.Add("output.fileName must be a file name only.");
         }
 
-        var source = ResolveManifestPath(manifest.Source.Directory, manifestDirectory);
-
-        if (source is null || !Directory.Exists(source))
-        {
-            errors.Add("source.directory must be an existing directory.");
-        }
-        else if (!File.Exists(Path.Combine(source, manifest.Application.Executable)))
-        {
-            errors.Add("application.executable is missing from source.directory.");
-        }
+        ValidateSourceFolders(manifest, manifestDirectory, errors);
 
         // The license file is always packaged as LICENSE.txt and presented in
         // the wizard, so it must exist even when acceptance is not mandatory.
@@ -99,6 +90,20 @@ public static class ManifestValidator
         var errors = new List<string>();
         ValidateCommon(manifest, errors);
 
+        // The destinations are resolved on the target machine, so each folder
+        // destination must still be safe even though the source directories
+        // only exist on the build machine.
+        foreach (var (folder, index) in manifest.Source.EffectiveFolders()
+            .Select((folder, index) => (folder, index)))
+        {
+            if (!SafePaths.IsSafeDestination(folder.Destination))
+            {
+                errors.Add(
+                    $"source.folders[{index}].destination must be empty, '.', "
+                    + "a safe relative subfolder, or an absolute path.");
+            }
+        }
+
         // The license is always packaged as LICENSE.txt and displayed in the
         // wizard, so its presence is mandatory.
         if (!File.Exists(Path.Combine(payloadDirectory, "LICENSE.txt")))
@@ -119,6 +124,92 @@ public static class ManifestValidator
         }
 
         return new ValidationResult(errors);
+    }
+
+    /// <summary>
+    /// Validates every source folder: its directory must exist, its
+    /// destination must be safe, and the files it maps into the installation
+    /// root must not collide with files from other folders. At least one
+    /// folder must be mapped to the installation root and contain the
+    /// application executable.
+    /// </summary>
+    private static void ValidateSourceFolders(
+        InstallerManifest manifest,
+        string manifestDirectory,
+        List<string> errors)
+    {
+        var folders = manifest.Source.EffectiveFolders();
+        var targets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (folder, index) in folders.Select((folder, index) => (folder, index)))
+        {
+            var source = ResolveManifestPath(folder.Directory, manifestDirectory);
+
+            if (source is null || !Directory.Exists(source))
+            {
+                errors.Add($"source.folders[{index}].directory must be an existing directory.");
+                continue;
+            }
+
+            if (!SafePaths.IsSafeDestination(folder.Destination))
+            {
+                errors.Add(
+                    $"source.folders[{index}].destination must be empty, '.', "
+                    + "a safe relative subfolder, or an absolute path.");
+            }
+
+            // Absolute destinations are stored in their own package bucket,
+            // so they cannot collide with the installation-root tree.
+            if (SafePaths.IsExternalDestination(folder.Destination))
+            {
+                continue;
+            }
+
+            try
+            {
+                foreach (var file in FileInventory.Enumerate(source))
+                {
+                    var target = SafePaths.IsRootDestination(folder.Destination)
+                        ? file
+                        : Path.Combine(folder.Destination, file);
+
+                    // Normalize the separators so "/" and "\" mixes compare equal.
+                    target = target.Replace(
+                        Path.AltDirectorySeparatorChar,
+                        Path.DirectorySeparatorChar);
+
+                    if (!targets.Add(target))
+                    {
+                        errors.Add($"File collision between source folders: {target}");
+                    }
+                }
+            }
+            catch (InvalidDataException exception)
+            {
+                errors.Add(exception.Message);
+            }
+        }
+
+        var rootContainsExecutable = folders.Any(folder =>
+            SafePaths.IsRootDestination(folder.Destination)
+            && ResolveManifestPath(folder.Directory, manifestDirectory) is string root
+            && File.Exists(Path.Combine(root, manifest.Application.Executable)));
+
+        if (rootContainsExecutable)
+        {
+            return;
+        }
+
+        if (!folders.Any(folder => SafePaths.IsRootDestination(folder.Destination)))
+        {
+            errors.Add(
+                "source.folders must contain a folder mapped to the installation "
+                + "root (destination '.').");
+        }
+        else
+        {
+            errors.Add("application.executable is missing from the root source folder(s).");
+        }
     }
 
     /// <summary>
@@ -259,6 +350,54 @@ public static class SafePaths
 
         fullPath = candidate;
         return true;
+    }
+
+    /// <summary>
+    /// Indicates whether a destination targets the installation root itself:
+    /// empty or <c>.</c>.
+    /// </summary>
+    public static bool IsRootDestination(string destination) =>
+        string.IsNullOrWhiteSpace(destination) || destination == ".";
+
+    /// <summary>
+    /// Indicates whether a destination is an absolute location on the target
+    /// machine (a rooted path or a template such as <c>{LocalAppData}</c>
+    /// that resolves to a fully qualified path), as opposed to a location
+    /// inside the installation root.
+    /// </summary>
+    public static bool IsExternalDestination(string destination)
+    {
+        if (IsRootDestination(destination))
+        {
+            return false;
+        }
+
+        return Path.IsPathRooted(destination)
+            || Path.IsPathFullyQualified(ResolveInstallDirectory(destination, "app"));
+    }
+
+    /// <summary>
+    /// Indicates whether an installation destination is acceptable: empty or
+    /// <c>.</c> for the installation root, a safe relative subfolder, or an
+    /// absolute path (possibly a template with placeholders) without parent
+    /// or current directory segments.
+    /// </summary>
+    public static bool IsSafeDestination(string destination)
+    {
+        if (IsRootDestination(destination))
+        {
+            return true;
+        }
+
+        if (!Path.IsPathRooted(destination))
+        {
+            return IsSafeRelative(destination);
+        }
+
+        return Path.IsPathFullyQualified(destination)
+            && !destination
+                .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                .Any(segment => segment is ".." or ".");
     }
 
     /// <summary>
