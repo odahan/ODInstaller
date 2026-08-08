@@ -37,33 +37,41 @@ public partial class MainWindow : Window
     private string _installDirectory = "";
 
     /// <summary>
+    /// Token used to cancel a running installation.
+    /// </summary>
+    private CancellationTokenSource? _installCts;
+
+    /// <summary>
     /// Initializes the window and starts loading the package when the window is displayed.
     /// </summary>
     public MainWindow()
     {
         InitializeComponent();
-        Loaded += (_, _) => LoadPackage();
+        Loaded += async (_, _) => await LoadPackageAsync();
         Closed += (_, _) => CleanupPayloadDirectory();
     }
 
     /// <summary>
     /// Extracts the package embedded in the executable and initializes the user interface
-    /// with its manifest.
+    /// with its manifest. Extraction runs on a background thread so the window stays
+    /// responsive while a large payload is decompressed.
     /// </summary>
     /// <remarks>
     /// The files are extracted to a unique temporary directory. The manifest, welcome image,
     /// installation directory, and shortcut options are then loaded before the first step
-    /// is displayed.
+    /// is displayed. The manifest is revalidated against the packaged content as a
+    /// defense-in-depth measure.
     /// </remarks>
     /// <exception cref="Exception">
     /// Any package reading, extraction, or validation error is logged, displayed to the user,
     /// and causes the window to close.
     /// </exception>
-    private void LoadPackage()
+    private async Task LoadPackageAsync()
     {
         try
         {
             InstallerLog.Info("Extracting package.");
+
             // Extract the embedded package to a unique temporary directory.
             _payloadDirectory = Path.Combine(
                 Path.GetTempPath(),
@@ -71,13 +79,36 @@ public partial class MainWindow : Window
 
             Directory.CreateDirectory(_payloadDirectory);
 
-            // Read the embedded payload and extract it using safe path validation.
-            using var payload = PackageFormat.OpenPayload(Environment.ProcessPath!);
-            FileInventory.ExtractSafely(payload, _payloadDirectory);
+            _manifest = await Task.Run(() =>
+            {
+                // Read the embedded payload and extract it using safe path validation.
+                using var payload = PackageFormat.OpenPayload(Environment.ProcessPath!);
+                FileInventory.ExtractSafely(payload, _payloadDirectory);
 
-            // Load the installer manifest and initialize the wizard options.
-            _manifest = JsonFiles.ReadManifest(
-                Path.Combine(_payloadDirectory, "installer.json"));
+                // Load the installer manifest.
+                return JsonFiles.ReadManifest(
+                    Path.Combine(_payloadDirectory, "installer.json"));
+            });
+
+            // Revalidate the manifest against the packaged content so a tampered
+            // or malformed package is rejected before any file is written.
+            var validation = ManifestValidator.ValidatePackage(
+                _manifest,
+                _payloadDirectory);
+
+            if (!validation.IsValid)
+            {
+                InstallerLog.Error(
+                    new InvalidDataException(
+                        $"Invalid package manifest: {string.Join("; ", validation.Errors)}"));
+                MessageBox.Show(
+                    "The package is invalid:\n\n" + string.Join("\n", validation.Errors),
+                    "Setup error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                Close();
+                return;
+            }
 
             // Configure the welcome image when one is included in the package.
             var welcomeImage = Path.Combine(_payloadDirectory, "welcome.png");
@@ -208,7 +239,7 @@ public partial class MainWindow : Window
     /// </summary>
     /// <param name="sender">Control that raised the event.</param>
     /// <param name="e">Click event data.</param>
-    private void Next_Click(object sender, RoutedEventArgs e)
+    private async void Next_Click(object sender, RoutedEventArgs e)
     {
         if (_page == 1 && _manifest.License.RequireAcceptance && AcceptBox.IsChecked != true)
         {
@@ -218,7 +249,7 @@ public partial class MainWindow : Window
 
         if (_page == 2)
         {
-            _installDirectory = DirectoryBox.Text;
+            _installDirectory = DirectoryBox.Text.Trim();
 
             if (string.IsNullOrWhiteSpace(_installDirectory) ||
                 !Path.IsPathFullyQualified(_installDirectory))
@@ -226,11 +257,23 @@ public partial class MainWindow : Window
                 MessageBox.Show("Choose a valid absolute folder.");
                 return;
             }
+
+            if (!SafePaths.IsCompatibleInstallDirectory(_installDirectory, _manifest.Application.Id))
+            {
+                MessageBox.Show(
+                    "The destination folder already contains files that do not belong "
+                    + $"to {_manifest.Application.Name}. Choose an empty folder or the "
+                    + "folder of a previous installation of this application.",
+                    "Setup",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
         }
 
         if (_page == 4)
         {
-            if (Install())
+            if (await InstallAsync())
             {
                 _page = 5;
                 ShowPage();
@@ -257,7 +300,8 @@ public partial class MainWindow : Window
 
             Process.Start(new ProcessStartInfo(executablePath)
             {
-                UseShellExecute = true
+                UseShellExecute = true,
+                WorkingDirectory = _installDirectory
             });
 
             Close();
@@ -269,22 +313,32 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// Cancels a running installation.
+    /// </summary>
+    /// <param name="sender">Control that raised the event.</param>
+    /// <param name="e">Click event data.</param>
+    private void Cancel_Click(object sender, RoutedEventArgs e)
+    {
+        _installCts?.Cancel();
+        CancelButton.IsEnabled = false;
+        ProgressText.Text = "Cancelling...";
+    }
+
+    /// <summary>
     /// Installs the application files and records its system information.
     /// </summary>
     /// <returns>
     /// <see langword="true"/> if the installation completes successfully;
-    /// <see langword="false"/> if the user cancels replacing an existing installation.
+    /// <see langword="false"/> if the user cancels replacing an existing
+    /// installation, cancels the running installation, or if an error occurs.
     /// </returns>
     /// <remarks>
     /// The method copies the application files, icon, and uninstaller, creates the requested
     /// shortcuts, registers the application in the Windows Registry, and writes the installation
-    /// manifest.
+    /// manifest. Copying runs on a background thread with progress reporting and cancellation.
+    /// On failure or cancellation, every file, shortcut, and directory created is removed.
     /// </remarks>
-    /// <exception cref="Exception">
-    /// An installation error is logged, the created files are removed, and the exception
-    /// is propagated to the caller.
-    /// </exception>
-    private bool Install()
+    private async Task<bool> InstallAsync()
     {
         var uninstallKey =
             $"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{_manifest.Application.Id}";
@@ -298,17 +352,66 @@ public partial class MainWindow : Window
             return false;
         }
 
-        var created = new List<string>();
+        if (!SafePaths.IsCompatibleInstallDirectory(_installDirectory, _manifest.Application.Id))
+        {
+            MessageBox.Show(
+                "The destination folder already contains files that do not belong "
+                + $"to {_manifest.Application.Name}. Choose an empty folder or the "
+                + "folder of a previous installation of this application.",
+                "Setup",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return false;
+        }
+
+        var createdFiles = new List<string>();
+        var createdDirectories = new List<string>();
+        var createdShortcuts = new List<string>();
+
+        // Snapshot the shortcuts that already exist so rollback only removes
+        // the ones that were actually created by this installation.
+        var plannedShortcuts = ShortcutWriter.GetShortcutPaths(
+            _manifest,
+            StartMenuBox.IsChecked == true,
+            DesktopBox.IsChecked == true);
+
+        var preExistingShortcuts = plannedShortcuts
+            .Where(File.Exists)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var installDirectoryExisted = Directory.Exists(_installDirectory);
+
+        _installCts = new CancellationTokenSource();
 
         try
         {
+            ShowInstalling(true);
+
             InstallerLog.Info($"Installing to {_installDirectory}.");
             Directory.CreateDirectory(_installDirectory);
 
-            CopyDirectory(
-                Path.Combine(_payloadDirectory, "app"),
-                _installDirectory,
-                created);
+            var appSource = Path.Combine(_payloadDirectory, "app");
+            var total = FileInventory.Enumerate(appSource).Count;
+
+            var progress = new Progress<FileCopyProgress>(update =>
+            {
+                InstallProgress.Value = total == 0
+                    ? 100
+                    : (double)update.Current / total * 100;
+                ProgressText.Text =
+                    $"Copying files ({update.Current} of {total}): {update.RelativePath}";
+            });
+
+            var copy = await Task.Run(
+                () => FileInventory.CopySafely(
+                    appSource,
+                    _installDirectory,
+                    progress,
+                    _installCts.Token),
+                _installCts.Token);
+
+            createdFiles.AddRange(copy.Files);
+            createdDirectories.AddRange(copy.CreatedDirectories);
 
             var packagedIcon = Path.Combine(_payloadDirectory, "application.ico");
             if (File.Exists(packagedIcon))
@@ -318,7 +421,7 @@ public partial class MainWindow : Window
                     Path.Combine(_installDirectory, "application.ico"),
                     true);
 
-                created.Add("application.ico");
+                createdFiles.Add("application.ico");
             }
 
             var uninstaller = Path.Combine(
@@ -330,13 +433,19 @@ public partial class MainWindow : Window
                 uninstaller,
                 true);
 
-            created.Add("OD.Installer.Uninstaller.exe");
+            createdFiles.Add("OD.Installer.Uninstaller.exe");
 
-            var shortcuts = ShortcutWriter.Create(
+            foreach (var shortcut in ShortcutWriter.Create(
                 _manifest,
                 _installDirectory,
                 StartMenuBox.IsChecked == true,
-                DesktopBox.IsChecked == true);
+                DesktopBox.IsChecked == true))
+            {
+                if (!preExistingShortcuts.Contains(shortcut))
+                {
+                    createdShortcuts.Add(shortcut);
+                }
+            }
 
             using var key = Registry.CurrentUser.CreateSubKey(uninstallKey);
             key.SetValue("DisplayName", _manifest.Application.Name);
@@ -364,72 +473,170 @@ public partial class MainWindow : Window
                     ApplicationId = _manifest.Application.Id,
                     Version = _manifest.Application.Version,
                     InstallDirectory = _installDirectory,
-                    Files = created,
+                    Files = createdFiles,
                     Directories = Directory
                         .GetDirectories(_installDirectory, "*", SearchOption.AllDirectories)
                         .Select(x => Path.GetRelativePath(_installDirectory, x))
                         .ToList(),
-                    Shortcuts = shortcuts,
+                    Shortcuts = plannedShortcuts,
                     RegistryKeys = [uninstallKey],
                     UninstallerPath = uninstaller
                 });
 
             InstallerLog.Info("Installation completed.");
+            InstallProgress.Value = 100;
             return true;
+        }
+        catch (OperationCanceledException)
+        {
+            InstallerLog.Info("Installation cancelled.");
+            Rollback(
+                _installDirectory,
+                installDirectoryExisted,
+                createdFiles,
+                createdDirectories,
+                createdShortcuts,
+                uninstallKey);
+            MessageBox.Show(
+                "The installation was cancelled.",
+                "Setup",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return false;
         }
         catch (Exception ex)
         {
             InstallerLog.Error(ex);
-
-            foreach (var relative in created)
-            {
-                var path = Path.Combine(_installDirectory, relative);
-                if (File.Exists(path))
-                {
-                    File.Delete(path);
-                }
-            }
-
-            Registry.CurrentUser.DeleteSubKeyTree(uninstallKey, false);
-            throw;
+            Rollback(
+                _installDirectory,
+                installDirectoryExisted,
+                createdFiles,
+                createdDirectories,
+                createdShortcuts,
+                uninstallKey);
+            MessageBox.Show(
+                $"Installation failed:\n\n{ex.Message}",
+                "Setup",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+            return false;
+        }
+        finally
+        {
+            _installCts.Dispose();
+            _installCts = null;
+            ShowInstalling(false);
         }
     }
 
     /// <summary>
-    /// Recursively copies files from a directory to a target directory.
+    /// Shows or hides the installation progress area and disables navigation
+    /// while an installation is running.
     /// </summary>
-    /// <param name="source">Source directory containing the files to copy.</param>
-    /// <param name="target">Destination root directory.</param>
-    /// <param name="created">
-    /// Collection to populate with the relative paths of copied files,
-    /// allowing cleanup if the operation fails.
-    /// </param>
-    /// <exception cref="InvalidDataException">
-    /// Thrown when a relative path attempts to escape the target directory.
-    /// </exception>
-    private static void CopyDirectory(
-        string source,
-        string target,
-        List<string> created)
+    /// <param name="installing"><see langword="true"/> while files are copied.</param>
+    private void ShowInstalling(bool installing)
     {
-        foreach (var file in Directory.EnumerateFiles(
-            source,
-            "*",
-            SearchOption.AllDirectories))
+        BackButton.IsEnabled = !installing;
+        NextButton.IsEnabled = !installing;
+        CancelButton.Visibility = installing ? Visibility.Visible : Visibility.Collapsed;
+        ProgressPanel.Visibility = installing ? Visibility.Visible : Visibility.Collapsed;
+
+        if (installing)
         {
-            var relative = Path.GetRelativePath(source, file);
+            InstallProgress.Value = 0;
+            ProgressText.Text = "";
+            CancelButton.IsEnabled = true;
+        }
+    }
 
-            if (!SafePaths.TryResolveUnderRoot(
-                target,
-                relative,
-                out var destination))
+    /// <summary>
+    /// Removes everything created by a failed or cancelled installation:
+    /// copied files, new shortcuts, newly created directories, and the
+    /// uninstall registry key.
+    /// </summary>
+    /// <param name="installDirectory">Target installation directory.</param>
+    /// <param name="installDirectoryExisted">
+    /// <see langword="true"/> when the directory existed before the installation.
+    /// </param>
+    /// <param name="createdFiles">Relative paths of the copied files.</param>
+    /// <param name="createdDirectories">Full paths of the created directories.</param>
+    /// <param name="createdShortcuts">Full paths of the created shortcuts.</param>
+    /// <param name="uninstallKey">Uninstall registry key to remove.</param>
+    private static void Rollback(
+        string installDirectory,
+        bool installDirectoryExisted,
+        IEnumerable<string> createdFiles,
+        IEnumerable<string> createdDirectories,
+        IEnumerable<string> createdShortcuts,
+        string uninstallKey)
+    {
+        foreach (var relative in createdFiles)
+        {
+            var path = Path.Combine(installDirectory, relative);
+            TryDeleteFile(path);
+        }
+
+        foreach (var shortcut in createdShortcuts)
+        {
+            TryDeleteFile(shortcut);
+        }
+
+        // Remove the created directories, deepest first, only when empty.
+        foreach (var directory in createdDirectories
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(directory => directory.Length))
+        {
+            TryDeleteDirectoryIfEmpty(directory);
+        }
+
+        // Remove the root when it was created by this installation.
+        if (!installDirectoryExisted)
+        {
+            TryDeleteDirectoryIfEmpty(installDirectory);
+        }
+
+        Registry.CurrentUser.DeleteSubKeyTree(uninstallKey, false);
+    }
+
+    /// <summary>
+    /// Deletes a file, ignoring locking or permission failures so a rollback
+    /// can continue.
+    /// </summary>
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
             {
-                throw new InvalidDataException("Unsafe file path.");
+                File.Delete(path);
             }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
 
-            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-            File.Copy(file, destination, true);
-            created.Add(relative);
+    /// <summary>
+    /// Deletes an empty directory, ignoring failures so a rollback can continue.
+    /// </summary>
+    private static void TryDeleteDirectoryIfEmpty(string directory)
+    {
+        try
+        {
+            if (Directory.Exists(directory)
+                && !Directory.EnumerateFileSystemEntries(directory).Any())
+            {
+                Directory.Delete(directory);
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
         }
     }
 

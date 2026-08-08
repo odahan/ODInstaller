@@ -6,71 +6,71 @@
         Background="{StaticResource SurfaceBrush}" Foreground="{StaticResource TextBrush}">
   <DockPanel>
     <Menu DockPanel.Dock="Top">
-      <MenuItem Header="_Fichier">
-        <MenuItem Header="_Nouveau" Click="New_Click" InputGestureText="Ctrl+N" />
-        <MenuItem Header="_Ouvrir..." Click="Open_Click" InputGestureText="Ctrl+O" />
+      <MenuItem Header="_File">
+        <MenuItem Header="_New" Click="New_Click" InputGestureText="Ctrl+N" />
+        <MenuItem Header="_Open..." Click="Open_Click" InputGestureText="Ctrl+O" />
         <Separator />
         <MenuItem x:Name="RecentFilesMenu" Header="_Recent" SubmenuOpened="RecentFilesMenu_SubmenuOpened" />
         <Separator />
-        <MenuItem Header="_Enregistrer" Click="Save_Click" InputGestureText="Ctrl+S" />
-        <MenuItem Header="Enregistrer _sous..." Click="SaveAs_Click" />
+        <MenuItem Header="_Save" Click="Save_Click" InputGestureText="Ctrl+S" />
+        <MenuItem Header="Save _As..." Click="SaveAs_Click" />
         <Separator />
-        <MenuItem Header="_Quitter" Click="Exit_Click" />
+        <MenuItem Header="E_xit" Click="Exit_Click" />
       </MenuItem>
-      <MenuItem Header="_Outils">
-        <MenuItem Header="_Vérifier la configuration" Click="Validate_Click" />
+      <MenuItem Header="_Tools">
+        <MenuItem Header="_Validate configuration" Click="Validate_Click" />
       </MenuItem>
     </Menu>
 
     <Border DockPanel.Dock="Bottom" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="16,10">
       <Grid>
         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-        <TextBlock x:Name="StatusText" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" Margin="0,0,28,0" Text="Nouvelle configuration" />
+        <TextBlock x:Name="StatusText" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" Margin="0,0,28,0" Text="New configuration" />
         <StackPanel Grid.Column="1" Orientation="Horizontal">
-          <Button Content="Vérifier" Click="Validate_Click" />
-          <Button Content="Enregistrer" Click="Save_Click" Margin="0" />
+          <Button Content="Validate" Click="Validate_Click" />
+          <Button Content="Save" Click="Save_Click" Margin="0" />
         </StackPanel>
       </Grid>
     </Border>
 
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
       <StackPanel Margin="24">
-        <TextBlock Text="Configuration de l'installateur" FontSize="24" FontWeight="SemiBold" />
-        <TextBlock Text="Renseignez les informations de votre application, puis enregistrez le fichier installer.json." Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,22" TextWrapping="Wrap" />
+        <TextBlock Text="Installer configuration" FontSize="24" FontWeight="SemiBold" />
+        <TextBlock Text="Enter the details of your application, then save the installer.json file." Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,22" TextWrapping="Wrap" />
 
         <GroupBox Header="Application" Margin="0,0,0,16">
           <StackPanel Margin="14">
-            <TextBlock Text="Identifiant" Style="{StaticResource FieldLabel}" Margin="0,0,0,5" /><TextBox x:Name="ApplicationIdBox" />
-            <TextBlock Text="Nom affiché" Style="{StaticResource FieldLabel}" /><TextBox x:Name="ApplicationNameBox" />
+            <TextBlock Text="Identifier" Style="{StaticResource FieldLabel}" Margin="0,0,0,5" /><TextBox x:Name="ApplicationIdBox" />
+            <TextBlock Text="Display name" Style="{StaticResource FieldLabel}" /><TextBox x:Name="ApplicationNameBox" />
             <TextBlock Text="Version" Style="{StaticResource FieldLabel}" /><TextBox x:Name="VersionBox" />
-            <TextBlock Text="Éditeur" Style="{StaticResource FieldLabel}" /><TextBox x:Name="PublisherBox" />
-            <TextBlock Text="Exécutable" Style="{StaticResource FieldLabel}" /><TextBox x:Name="ExecutableBox" ToolTip="Chemin relatif dans le dossier source, par exemple MonApp.exe" />
-            <TextBlock Text="Icône (facultatif)" Style="{StaticResource FieldLabel}" />
-            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBox x:Name="IconBox" /><Button Grid.Column="1" Content="Parcourir..." Margin="8,0,0,0" Click="BrowseIcon_Click" /></Grid>
-            <TextBlock Text="Image d'accueil (facultatif)" Style="{StaticResource FieldLabel}" />
-            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBox x:Name="WelcomeImageBox" /><Button Grid.Column="1" Content="Parcourir..." Margin="8,0,0,0" Click="BrowseWelcomeImage_Click" /></Grid>
+            <TextBlock Text="Publisher" Style="{StaticResource FieldLabel}" /><TextBox x:Name="PublisherBox" />
+            <TextBlock Text="Executable" Style="{StaticResource FieldLabel}" /><TextBox x:Name="ExecutableBox" ToolTip="Relative path inside the source folder, for example MyApp.exe" />
+            <TextBlock Text="Icon (optional)" Style="{StaticResource FieldLabel}" />
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBox x:Name="IconBox" /><Button Grid.Column="1" Content="Browse..." Margin="8,0,0,0" Click="BrowseIcon_Click" /></Grid>
+            <TextBlock Text="Welcome image (optional)" Style="{StaticResource FieldLabel}" />
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBox x:Name="WelcomeImageBox" /><Button Grid.Column="1" Content="Browse..." Margin="8,0,0,0" Click="BrowseWelcomeImage_Click" /></Grid>
           </StackPanel>
         </GroupBox>
 
-        <GroupBox Header="Fichiers et installation" Margin="0,0,0,16">
+        <GroupBox Header="Files and installation" Margin="0,0,0,16">
           <StackPanel Margin="14">
-            <TextBlock Text="Dossier source" Style="{StaticResource FieldLabel}" Margin="0,0,0,5" />
-            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBox x:Name="SourceDirectoryBox" /><Button Grid.Column="1" Content="Parcourir..." Margin="8,0,0,0" Click="BrowseSource_Click" /></Grid>
-            <TextBlock Text="Dossier d'installation" Style="{StaticResource FieldLabel}" /><TextBox x:Name="InstallationDirectoryBox" ToolTip="Utilisez {LocalAppData} et &lt;Application&gt; si souhaité." />
-            <CheckBox x:Name="AllowDirectorySelectionBox" Content="Laisser l'utilisateur choisir le dossier d'installation" Margin="0,12,0,0" />
-            <TextBlock Text="Fichier de licence" Style="{StaticResource FieldLabel}" />
-            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBox x:Name="LicenseFileBox" /><Button Grid.Column="1" Content="Parcourir..." Margin="8,0,0,0" Click="BrowseLicense_Click" /></Grid>
-            <CheckBox x:Name="RequireAcceptanceBox" Content="Demander l'acceptation de la licence" Margin="0,12,0,0" />
+            <TextBlock Text="Source folder" Style="{StaticResource FieldLabel}" Margin="0,0,0,5" />
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBox x:Name="SourceDirectoryBox" /><Button Grid.Column="1" Content="Browse..." Margin="8,0,0,0" Click="BrowseSource_Click" /></Grid>
+            <TextBlock Text="Installation folder" Style="{StaticResource FieldLabel}" /><TextBox x:Name="InstallationDirectoryBox" ToolTip="Use {LocalAppData} and &lt;Application&gt; if desired." />
+            <CheckBox x:Name="AllowDirectorySelectionBox" Content="Let the user choose the installation folder" Margin="0,12,0,0" />
+            <TextBlock Text="License file" Style="{StaticResource FieldLabel}" />
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBox x:Name="LicenseFileBox" /><Button Grid.Column="1" Content="Browse..." Margin="8,0,0,0" Click="BrowseLicense_Click" /></Grid>
+            <CheckBox x:Name="RequireAcceptanceBox" Content="Require license acceptance" Margin="0,12,0,0" />
           </StackPanel>
         </GroupBox>
 
-        <GroupBox Header="Raccourcis et fichier généré">
+        <GroupBox Header="Shortcuts and generated file">
           <StackPanel Margin="14">
-            <TextBlock Text="Raccourcis" Style="{StaticResource FieldLabel}" Margin="0,0,0,5" /><StackPanel Orientation="Horizontal"><CheckBox x:Name="StartMenuBox" Content="Menu Démarrer" Margin="0,0,20,0" /><CheckBox x:Name="DesktopBox" Content="Bureau" /></StackPanel>
-            <TextBlock Text="Dossier de sortie" Style="{StaticResource FieldLabel}" />
-            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBox x:Name="OutputDirectoryBox" /><Button Grid.Column="1" Content="Parcourir..." Margin="8,0,0,0" Click="BrowseOutput_Click" /></Grid>
-            <TextBlock Text="Nom du fichier" Style="{StaticResource FieldLabel}" /><TextBox x:Name="OutputFileNameBox" />
-            <TextBlock Foreground="{StaticResource MutedTextBrush}" Margin="0,8,0,0" Text="Exemple : MonApplication-Setup-1.0.0.exe" />
+            <TextBlock Text="Shortcuts" Style="{StaticResource FieldLabel}" Margin="0,0,0,5" /><StackPanel Orientation="Horizontal"><CheckBox x:Name="StartMenuBox" Content="Start menu" Margin="0,0,20,0" /><CheckBox x:Name="DesktopBox" Content="Desktop" /></StackPanel>
+            <TextBlock Text="Output folder" Style="{StaticResource FieldLabel}" />
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBox x:Name="OutputDirectoryBox" /><Button Grid.Column="1" Content="Browse..." Margin="8,0,0,0" Click="BrowseOutput_Click" /></Grid>
+            <TextBlock Text="File name" Style="{StaticResource FieldLabel}" /><TextBox x:Name="OutputFileNameBox" />
+            <TextBlock Foreground="{StaticResource MutedTextBrush}" Margin="0,8,0,0" Text="Example: MyApplication-Setup-1.0.0.exe" />
           </StackPanel>
         </GroupBox>
       </StackPanel>

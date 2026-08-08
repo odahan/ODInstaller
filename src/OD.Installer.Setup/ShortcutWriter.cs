@@ -24,6 +24,38 @@ internal static class ShortcutWriter
         new("00021401-0000-0000-C000-000000000046");
 
     /// <summary>
+    /// Computes the full paths of the shortcuts that would be created.
+    /// </summary>
+    /// <param name="manifest">Manifest containing the application name.</param>
+    /// <param name="startMenu"><see langword="true"/> for the Start menu shortcut.</param>
+    /// <param name="desktop"><see langword="true"/> for the desktop shortcut.</param>
+    /// <returns>The full paths of the shortcuts to create.</returns>
+    public static List<string> GetShortcutPaths(
+        InstallerManifest manifest,
+        bool startMenu,
+        bool desktop)
+    {
+        var paths = new List<string>();
+
+        if (startMenu)
+        {
+            paths.Add(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.StartMenu),
+                "Programs",
+                $"{manifest.Application.Name}.lnk"));
+        }
+
+        if (desktop)
+        {
+            paths.Add(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+                $"{manifest.Application.Name}.lnk"));
+        }
+
+        return paths;
+    }
+
+    /// <summary>
     /// Creates the requested Start menu and desktop shortcuts.
     /// </summary>
     /// <param name="manifest">
@@ -48,7 +80,7 @@ internal static class ShortcutWriter
         bool startMenu,
         bool desktop)
     {
-        var createdShortcuts = new List<string>();
+        var createdShortcuts = GetShortcutPaths(manifest, startMenu, desktop);
 
         var targetPath = Path.Combine(
             installDirectory,
@@ -62,37 +94,14 @@ internal static class ShortcutWriter
             ? iconPath
             : null;
 
-        if (startMenu)
+        foreach (var shortcutPath in createdShortcuts)
         {
-            var startMenuPath = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.StartMenu),
-                "Programs",
-                $"{manifest.Application.Name}.lnk");
-
             WriteShortcut(
-                startMenuPath,
+                shortcutPath,
                 manifest.Application.Name,
                 targetPath,
                 installDirectory,
                 existingIconPath);
-
-            createdShortcuts.Add(startMenuPath);
-        }
-
-        if (desktop)
-        {
-            var desktopPath = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
-                $"{manifest.Application.Name}.lnk");
-
-            WriteShortcut(
-                desktopPath,
-                manifest.Application.Name,
-                targetPath,
-                installDirectory,
-                existingIconPath);
-
-            createdShortcuts.Add(desktopPath);
         }
 
         return createdShortcuts;

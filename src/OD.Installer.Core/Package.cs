@@ -11,10 +11,34 @@ namespace OD.Installer.Core;
 public static class PackageFormat
 {
     /// <summary>
+    /// Current format version of the payload footer.
+    /// </summary>
+    public const int FormatVersion = 2;
+
+    /// <summary>
     /// Marker written right after the payload to identify and locate it
     /// at the end of the installer executable.
     /// </summary>
-    private static readonly byte[] Marker = Encoding.ASCII.GetBytes("ODINST01");
+    private static readonly byte[] Marker = Encoding.ASCII.GetBytes("ODINST02");
+
+    /// <summary>
+    /// Marker used by the version 1 footer (no format version field).
+    /// Still recognized for compatibility with earlier generated installers.
+    /// </summary>
+    private static readonly byte[] LegacyMarker = Encoding.ASCII.GetBytes("ODINST01");
+
+    /// <summary>
+    /// How many bytes after the footer are tolerated when locating it. This
+    /// leaves room for a code-signature certificate table appended at the end
+    /// of the file after the package was built.
+    /// </summary>
+    private const int MaxFooterTrailingBytes = 128 * 1024;
+
+    /// <summary>
+    /// "PK\x05\x06", the ZIP end-of-central-directory signature expected
+    /// immediately before the footer.
+    /// </summary>
+    private static readonly byte[] EndOfCentralDirectorySignature = [0x50, 0x4B, 0x05, 0x06];
 
     /// <summary>
     /// Builds the installer executable by copying the host executable and
@@ -84,10 +108,15 @@ public static class PackageFormat
                     }
                 }
 
-                // After the ZIP is finalized, append the footer:
-                // the marker followed by the payload length.
+                // After the ZIP is finalized, append the footer: the marker,
+                // the format version and the payload length. The footer is
+                // written right after the ZIP's end-of-central-directory.
                 var payloadLength = stream.Position;
                 stream.Write(Marker);
+
+                Span<byte> version = stackalloc byte[4];
+                BinaryPrimitives.WriteInt32LittleEndian(version, FormatVersion);
+                stream.Write(version);
 
                 Span<byte> length = stackalloc byte[8];
                 BinaryPrimitives.WriteInt64LittleEndian(length, payloadLength);
@@ -119,37 +148,141 @@ public static class PackageFormat
             FileAccess.Read,
             FileShare.Read);
 
+        try
+        {
+            if (!TryLocateFooter(stream, out var payloadStart, out var payloadLength))
+            {
+                throw new InvalidDataException("Installer payload is missing or invalid.");
+            }
+
+            // Return a bounded window over the payload so the ZIP is read
+            // without copying the whole archive into memory. The returned
+            // stream owns the underlying file and disposes it.
+            stream.Seek(payloadStart, SeekOrigin.Begin);
+            return new PayloadStream(stream, payloadStart, payloadLength);
+        }
+        catch
+        {
+            stream.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Locates the payload footer by scanning the tail of the file backwards.
+    /// The footer is not required to be at the absolute end of the file: a
+    /// bounded amount of trailing data (for example a code-signature
+    /// certificate table) is tolerated.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> and the payload bounds when a valid footer is
+    /// found; otherwise <see langword="false"/>.
+    /// </returns>
+    private static bool TryLocateFooter(
+        FileStream stream,
+        out long payloadStart,
+        out long payloadLength)
+    {
+        payloadStart = 0;
+        payloadLength = 0;
+
         if (stream.Length < 16)
         {
-            stream.Dispose();
-            throw new InvalidDataException("Installer payload is missing.");
+            return false;
         }
 
-        // Read the 16-byte footer (8-byte marker + 8-byte payload length).
-        stream.Seek(-16, SeekOrigin.End);
-        var footer = new byte[16];
-        stream.ReadExactly(footer);
+        var tailLength = (int)Math.Min(stream.Length, MaxFooterTrailingBytes + 24);
+        var tail = new byte[tailLength];
+        stream.Seek(-tailLength, SeekOrigin.End);
+        stream.ReadExactly(tail);
+        var tailStart = stream.Length - tailLength;
 
-        if (!footer.AsSpan(0, 8).SequenceEqual(Marker))
+        return TryLocateFooter(stream, tail, tailStart, Marker, hasVersion: true, out payloadStart, out payloadLength)
+            || TryLocateFooter(stream, tail, tailStart, LegacyMarker, hasVersion: false, out payloadStart, out payloadLength);
+    }
+
+    /// <summary>
+    /// Scans the tail buffer backwards for a specific footer marker and
+    /// validates the footer content and the ZIP record before it.
+    /// </summary>
+    private static bool TryLocateFooter(
+        FileStream stream,
+        byte[] tail,
+        long tailStart,
+        byte[] marker,
+        bool hasVersion,
+        out long payloadStart,
+        out long payloadLength)
+    {
+        payloadStart = 0;
+        payloadLength = 0;
+
+        var footerSize = hasVersion ? 20 : 16;
+
+        for (var i = tail.Length - marker.Length; i >= 0; i--)
         {
-            stream.Dispose();
-            throw new InvalidDataException("Installer payload marker is invalid.");
+            if (!tail.AsSpan(i, marker.Length).SequenceEqual(marker))
+            {
+                continue;
+            }
+
+            var footerStart = tailStart + i;
+
+            if (footerStart + footerSize > stream.Length)
+            {
+                continue;
+            }
+
+            long length;
+
+            if (hasVersion)
+            {
+                var version = BinaryPrimitives.ReadInt32LittleEndian(tail.AsSpan(i + 8, 4));
+
+                if (version != FormatVersion)
+                {
+                    continue;
+                }
+
+                length = BinaryPrimitives.ReadInt64LittleEndian(tail.AsSpan(i + 12, 8));
+            }
+            else
+            {
+                length = BinaryPrimitives.ReadInt64LittleEndian(tail.AsSpan(i + 8, 8));
+            }
+
+            if (length <= 0 || length > footerStart)
+            {
+                continue;
+            }
+
+            // The ZIP end-of-central-directory record ends exactly at the
+            // footer, so its "PK\x05\x06" signature must be the four bytes
+            // 22 bytes before the footer (our builder always writes a ZIP
+            // without a comment). This rejects false marker matches inside
+            // trailing data.
+            const int endOfCentralDirectorySize = 22;
+
+            if (footerStart - endOfCentralDirectorySize < 0)
+            {
+                continue;
+            }
+
+            stream.Seek(footerStart - endOfCentralDirectorySize, SeekOrigin.Begin);
+            var eocd = new byte[4];
+            stream.ReadExactly(eocd);
+
+            if (!eocd.AsSpan().SequenceEqual(EndOfCentralDirectorySignature))
+            {
+                continue;
+            }
+
+            payloadStart = footerStart - length;
+            payloadLength = length;
+            return true;
         }
 
-        var length = BinaryPrimitives.ReadInt64LittleEndian(footer.AsSpan(8));
-
-        if (length <= 0 || length > stream.Length - 16)
-        {
-            stream.Dispose();
-            throw new InvalidDataException("Installer payload length is invalid.");
-        }
-
-        // Return a bounded window over the payload so the ZIP is read without
-        // copying the whole archive into memory. The returned stream owns the
-        // underlying file and disposes it.
-        var start = stream.Length - 16 - length;
-        stream.Seek(start, SeekOrigin.Begin);
-        return new PayloadStream(stream, start, length);
+        return false;
     }
 
     /// <summary>

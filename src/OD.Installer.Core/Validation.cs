@@ -25,36 +25,7 @@ public static class ManifestValidator
     public static ValidationResult Validate(InstallerManifest manifest, string manifestDirectory)
     {
         var errors = new List<string>();
-
-        if (string.IsNullOrWhiteSpace(manifest.Application.Id)
-            || manifest.Application.Id.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
-        {
-            errors.Add("application.id is required and must be a valid key.");
-        }
-
-        if (string.IsNullOrWhiteSpace(manifest.Application.Name)
-            || manifest.Application.Name.IndexOfAny(
-                Path.GetInvalidFileNameChars()) >= 0)
-        {
-            errors.Add(
-                "application.name is required and must be a valid file name.");
-        }
-
-        if (!Version.TryParse(manifest.Application.Version, out _))
-        {
-            errors.Add("application.version must be a valid version.");
-        }
-
-        if (string.IsNullOrWhiteSpace(manifest.Application.Executable)
-            || !SafePaths.IsSafeRelative(manifest.Application.Executable))
-        {
-            errors.Add("application.executable must be a safe relative path.");
-        }
-
-        if (!string.Equals(manifest.Installation.Scope, "perUser", StringComparison.OrdinalIgnoreCase))
-        {
-            errors.Add("installation.scope must be 'perUser' in V1.");
-        }
+        ValidateCommon(manifest, errors);
 
         if (ResolveManifestPath(manifest.Output.Directory, manifestDirectory) is null)
         {
@@ -111,6 +82,85 @@ public static class ManifestValidator
         }
 
         return new ValidationResult(errors);
+    }
+
+    /// <summary>
+    /// Validates a manifest loaded from an installer package against the
+    /// packaged content. Used by Setup as a defense-in-depth check: the
+    /// manifest must be well formed and the files it depends on must be
+    /// present inside the extracted package. Paths that are only meaningful
+    /// on the build machine (source directory, output) are not checked.
+    /// </summary>
+    /// <param name="manifest">Manifest extracted from the package.</param>
+    /// <param name="payloadDirectory">Directory containing the extracted package.</param>
+    /// <returns>The validation result, listing every error found.</returns>
+    public static ValidationResult ValidatePackage(InstallerManifest manifest, string payloadDirectory)
+    {
+        var errors = new List<string>();
+        ValidateCommon(manifest, errors);
+
+        // The license is always packaged as LICENSE.txt and displayed in the
+        // wizard, so its presence is mandatory.
+        if (!File.Exists(Path.Combine(payloadDirectory, "LICENSE.txt")))
+        {
+            errors.Add("license.file must be present in the package as LICENSE.txt.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(manifest.Application.WelcomeImage)
+            && !File.Exists(Path.Combine(payloadDirectory, "welcome.png")))
+        {
+            errors.Add("application.welcomeImage is missing from the package.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(manifest.Application.Icon)
+            && !File.Exists(Path.Combine(payloadDirectory, "application.ico")))
+        {
+            errors.Add("application.icon is missing from the package.");
+        }
+
+        return new ValidationResult(errors);
+    }
+
+    /// <summary>
+    /// Applies the checks that are shared by every validation mode: the
+    /// application identity fields and the installation scope and directory.
+    /// </summary>
+    private static void ValidateCommon(InstallerManifest manifest, List<string> errors)
+    {
+        if (string.IsNullOrWhiteSpace(manifest.Application.Id)
+            || manifest.Application.Id.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        {
+            errors.Add("application.id is required and must be a valid key.");
+        }
+
+        if (string.IsNullOrWhiteSpace(manifest.Application.Name)
+            || manifest.Application.Name.IndexOfAny(
+                Path.GetInvalidFileNameChars()) >= 0)
+        {
+            errors.Add(
+                "application.name is required and must be a valid file name.");
+        }
+
+        if (!Version.TryParse(manifest.Application.Version, out _))
+        {
+            errors.Add("application.version must be a valid version.");
+        }
+
+        if (string.IsNullOrWhiteSpace(manifest.Application.Executable)
+            || !SafePaths.IsSafeRelative(manifest.Application.Executable))
+        {
+            errors.Add("application.executable must be a safe relative path.");
+        }
+
+        if (!string.Equals(manifest.Installation.Scope, "perUser", StringComparison.OrdinalIgnoreCase))
+        {
+            errors.Add("installation.scope must be 'perUser' in V1.");
+        }
+
+        if (!SafePaths.IsSafeInstallTemplate(manifest.Installation.Directory))
+        {
+            errors.Add("installation.directory must resolve to an absolute, safe path.");
+        }
     }
 
     /// <summary>
@@ -221,4 +271,68 @@ public static class SafePaths
         template
             .Replace("{LocalAppData}", Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), StringComparison.OrdinalIgnoreCase)
             .Replace("<Application>", applicationName, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Indicates whether an install directory template is acceptable: it must
+    /// not contain parent traversal segments and it must resolve to a fully
+    /// qualified path once the known placeholders are substituted.
+    /// </summary>
+    /// <param name="template">Install directory template.</param>
+    public static bool IsSafeInstallTemplate(string template)
+    {
+        if (string.IsNullOrWhiteSpace(template))
+        {
+            return false;
+        }
+
+        if (template.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Any(segment => segment is ".."))
+        {
+            return false;
+        }
+
+        return Path.IsPathFullyQualified(ResolveInstallDirectory(template, "app"));
+    }
+
+    /// <summary>
+    /// Indicates whether a target directory can be used as the installation
+    /// destination for an application. A missing or empty directory is always
+    /// acceptable; a non-empty directory is accepted only when it already
+    /// contains an installation manifest for the same application (an
+    /// in-place upgrade). This prevents blind overwrites of unrelated folders.
+    /// </summary>
+    /// <param name="directory">Target installation directory.</param>
+    /// <param name="applicationId">Stable identifier of the application.</param>
+    public static bool IsCompatibleInstallDirectory(string directory, string applicationId)
+    {
+        if (!Directory.Exists(directory))
+        {
+            return true;
+        }
+
+        if (!Directory.EnumerateFileSystemEntries(directory).Any())
+        {
+            return true;
+        }
+
+        var marker = Path.Combine(directory, ".od.installer-installed.json");
+
+        if (!File.Exists(marker))
+        {
+            return false;
+        }
+
+        try
+        {
+            var installed = JsonFiles.ReadInstalledManifest(marker);
+            return string.Equals(
+                installed.ApplicationId,
+                applicationId,
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
 }

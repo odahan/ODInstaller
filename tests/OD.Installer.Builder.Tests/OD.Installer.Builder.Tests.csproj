@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\OD.Installer.Core\OD.Installer.Core.csproj" />
+    <ProjectReference Include="..\..\src\OD.Installer.Builder\OD.Installer.Builder.csproj" />
   </ItemGroup>
 
 </Project>

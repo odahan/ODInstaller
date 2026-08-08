@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json;
 using OD.Installer.Core;
 
@@ -13,26 +14,39 @@ internal static class Program
     /// </summary>
     /// <param name="args">
     /// Command-line arguments. The expected format is:
-    /// <c>build &lt;installer.json&gt; [--output &lt;directory&gt;] [--force]</c>.
+    /// <c>build &lt;installer.json&gt; [--output &lt;directory&gt;] [--force] [--verbose]</c>.
     /// </param>
     /// <returns>
     /// Zero when the package is successfully created; otherwise, a non-zero exit code.
     /// </returns>
     private static int Main(string[] args)
     {
-        // The builder currently supports only the "build" command.
-        if (args.Length < 2
-            || !string.Equals(
-                args[0],
-                "build",
-                StringComparison.OrdinalIgnoreCase))
+        CliArguments parsed;
+
+        try
         {
+            parsed = CliParser.Parse(args);
+        }
+        catch (ArgumentException exception)
+        {
+            Console.Error.WriteLine($"error: {exception.Message}");
             return Usage();
+        }
+
+        if (parsed.ShowHelp)
+        {
+            return Help();
+        }
+
+        if (parsed.ShowVersion)
+        {
+            Console.WriteLine(VersionString);
+            return 0;
         }
 
         try
         {
-            var manifestPath = Path.GetFullPath(args[1]);
+            var manifestPath = Path.GetFullPath(parsed.ManifestPath);
 
             // Resolve all relative paths from the manifest directory.
             var root = Path.GetDirectoryName(manifestPath)
@@ -53,7 +67,7 @@ internal static class Program
             }
 
             var outputDirectory =
-                Option(args, "--output")
+                parsed.Output
                 ?? ManifestValidator.ResolveOutput(
                     manifest.Output.Directory,
                     root);
@@ -62,15 +76,7 @@ internal static class Program
                 outputDirectory,
                 manifest.Output.FileName);
 
-            var forceOverwrite = args.Contains(
-                "--force",
-                StringComparer.OrdinalIgnoreCase);
-
-            var verbose = args.Contains(
-                "--verbose",
-                StringComparer.OrdinalIgnoreCase);
-
-            if (File.Exists(outputPath) && !forceOverwrite)
+            if (File.Exists(outputPath) && !parsed.Force)
             {
                 throw new IOException(
                     $"Output exists: {outputPath}. "
@@ -109,7 +115,7 @@ internal static class Program
 
             var appFiles = FileInventory.Enumerate(sourcePath);
 
-            if (verbose)
+            if (parsed.Verbose)
             {
                 Console.WriteLine($"Manifest: {manifestPath}");
                 Console.WriteLine($"Output: {outputPath}");
@@ -122,7 +128,7 @@ internal static class Program
             Console.WriteLine(
                 $"Including {appFiles.Count} application files.");
 
-            if (verbose)
+            if (parsed.Verbose)
             {
                 foreach (var file in appFiles)
                 {
@@ -188,34 +194,13 @@ internal static class Program
     }
 
     /// <summary>
-    /// Retrieves the value following a command-line option.
+    /// The builder's informational version string.
     /// </summary>
-    /// <param name="args">Command-line arguments.</param>
-    /// <param name="name">Option name to find.</param>
-    /// <returns>
-    /// The option value, or <see langword="null"/> when the option is missing
-    /// or is immediately followed by another option.
-    /// </returns>
-    private static string? Option(
-        string[] args,
-        string name)
-    {
-        var index = Array.FindIndex(
-            args,
-            argument => string.Equals(
-                argument,
-                name,
-                StringComparison.OrdinalIgnoreCase));
-
-        if (index < 0 || index + 1 >= args.Length)
-        {
-            return null;
-        }
-
-        // Do not treat a following option as the value of this option.
-        var value = args[index + 1];
-        return value.StartsWith('-') ? null : value;
-    }
+    private static string VersionString =>
+        typeof(Program).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion
+            ?? "unknown";
 
     /// <summary>
     /// Displays the supported command-line syntax.
@@ -226,7 +211,30 @@ internal static class Program
         Console.Error.WriteLine(
             "Usage: od.installer build <installer.json> "
             + "[--output <directory>] [--force] [--verbose]");
+        Console.Error.WriteLine(
+            "       od.installer --help | --version");
 
         return 2;
+    }
+
+    /// <summary>
+    /// Displays the full help text.
+    /// </summary>
+    /// <returns>The success exit code.</returns>
+    private static int Help()
+    {
+        Console.WriteLine("od.installer - build self-contained Windows installers.");
+        Console.WriteLine();
+        Console.WriteLine("Usage:");
+        Console.WriteLine("  od.installer build <installer.json> [options]");
+        Console.WriteLine();
+        Console.WriteLine("Options:");
+        Console.WriteLine("  --output <directory>  Override the output directory.");
+        Console.WriteLine("  --force               Overwrite an existing installer file.");
+        Console.WriteLine("  --verbose             Print detailed build information.");
+        Console.WriteLine("  --help, -h            Show this help.");
+        Console.WriteLine("  --version             Show the builder version.");
+
+        return 0;
     }
 }

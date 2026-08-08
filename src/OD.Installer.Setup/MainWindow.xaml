@@ -41,6 +41,14 @@
             <Setter Property="Padding" Value="8" />
         </Style>
 
+        <!-- Installation progress bar appearance. -->
+        <Style TargetType="ProgressBar">
+            <Setter Property="Height" Value="8" />
+            <Setter Property="Foreground" Value="#2D6CDF" />
+            <Setter Property="Background" Value="#252525" />
+            <Setter Property="BorderBrush" Value="#555555" />
+        </Style>
+
         <!-- Compact dark scrollbar appearance. -->
         <Style TargetType="ScrollBar">
             <Setter Property="Background" Value="#191919" />
@@ -100,6 +108,7 @@
     <Grid Margin="24">
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
@@ -207,12 +216,36 @@
             </Grid>
         </Grid>
 
+        <!-- Installation progress area, visible while files are copied. -->
+        <StackPanel
+            x:Name="ProgressPanel"
+            Grid.Row="1"
+            Margin="0,16,0,0"
+            Visibility="Collapsed">
+            <ProgressBar
+                x:Name="InstallProgress"
+                Minimum="0"
+                Maximum="100" />
+            <TextBlock
+                x:Name="ProgressText"
+                Margin="0,6,0,0"
+                TextWrapping="Wrap" />
+        </StackPanel>
+
         <!-- Wizard navigation buttons. -->
         <StackPanel
-            Grid.Row="1"
+            Grid.Row="2"
             Margin="0,20,0,0"
             HorizontalAlignment="Right"
             Orientation="Horizontal">
+
+            <Button
+                x:Name="CancelButton"
+                Width="90"
+                Margin="0,0,8,0"
+                Click="Cancel_Click"
+                Content="Cancel"
+                Visibility="Collapsed" />
 
             <Button
                 x:Name="BackButton"

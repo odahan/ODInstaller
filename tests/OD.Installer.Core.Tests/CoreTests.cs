@@ -181,4 +181,258 @@ public sealed class CoreTests
             Directory.Delete(root, true);
         }
     }
+
+    [Fact]
+    public void IsCompatibleInstallDirectory_AcceptsMissingOrEmpty()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            Assert.True(SafePaths.IsCompatibleInstallDirectory(Path.Combine(root, "missing"), "Demo"));
+            Directory.CreateDirectory(root);
+            Assert.True(SafePaths.IsCompatibleInstallDirectory(root, "Demo"));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void IsCompatibleInstallDirectory_RefusesForeignContent()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(root);
+            File.WriteAllText(Path.Combine(root, "unrelated.txt"), "x");
+            Assert.False(SafePaths.IsCompatibleInstallDirectory(root, "Demo"));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void IsCompatibleInstallDirectory_AcceptsMatchingInstallationOnly()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(root);
+            JsonFiles.WriteInstalledManifest(
+                Path.Combine(root, ".od.installer-installed.json"),
+                new InstalledManifest
+                {
+                    ApplicationId = "Demo",
+                    Version = "1.0",
+                    InstallDirectory = root,
+                    Files = [],
+                    Directories = [],
+                    Shortcuts = [],
+                    RegistryKeys = []
+                });
+            File.WriteAllText(Path.Combine(root, "Demo.exe"), "x");
+
+            Assert.True(SafePaths.IsCompatibleInstallDirectory(root, "Demo"));
+            Assert.False(SafePaths.IsCompatibleInstallDirectory(root, "Other"));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void IsCompatibleInstallDirectory_RejectsCorruptManifest()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(root);
+            File.WriteAllText(Path.Combine(root, ".od.installer-installed.json"), "not json");
+            Assert.False(SafePaths.IsCompatibleInstallDirectory(root, "Demo"));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void IsSafeInstallTemplate_AcceptsPlaceholdersAndRejectsTraversal()
+    {
+        Assert.True(SafePaths.IsSafeInstallTemplate("{LocalAppData}/Programs/<Application>"));
+        Assert.True(SafePaths.IsSafeInstallTemplate(Path.Combine(Path.GetTempPath(), "Demo")));
+        Assert.False(SafePaths.IsSafeInstallTemplate("..\\Programs\\Demo"));
+        Assert.False(SafePaths.IsSafeInstallTemplate("{LocalAppData}\\..\\Demo"));
+        Assert.False(SafePaths.IsSafeInstallTemplate(""));
+        Assert.False(SafePaths.IsSafeInstallTemplate("relative"));
+    }
+
+    [Fact]
+    public void ManifestValidator_RejectsUnsafeInstallDirectoryTemplate()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root, "source"));
+            File.WriteAllText(Path.Combine(root, "source", "test.exe"), "x");
+            File.WriteAllText(Path.Combine(root, "LICENSE.txt"), "x");
+
+            var manifest = new InstallerManifest
+            {
+                Application = new ApplicationManifest { Id = "test", Name = "Test", Version = "1.0", Executable = "test.exe" },
+                Source = new SourceManifest { Directory = Path.Combine(root, "source") },
+                Installation = new InstallationManifest { Directory = "..\\Programs\\Test" },
+                License = new LicenseManifest { File = Path.Combine(root, "LICENSE.txt") },
+                Output = new OutputManifest { Directory = root, FileName = "test.exe" }
+            };
+
+            var result = ManifestValidator.Validate(manifest, root);
+            Assert.Contains(result.Errors, x => x.Contains("installation.directory", StringComparison.Ordinal));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void ValidatePackage_AcceptsAValidPackage()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            var payload = Path.Combine(root, "payload");
+            Directory.CreateDirectory(payload);
+            File.WriteAllText(Path.Combine(payload, "LICENSE.txt"), "license");
+
+            var manifest = new InstallerManifest
+            {
+                Application = new ApplicationManifest { Id = "demo", Name = "Demo", Version = "1.0", Executable = "Demo.exe" },
+                Installation = new InstallationManifest { Directory = "{LocalAppData}/Programs/Demo" },
+                License = new LicenseManifest { File = "ignored", RequireAcceptance = true }
+            };
+
+            Assert.True(ManifestValidator.ValidatePackage(manifest, payload).IsValid);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void ValidatePackage_RejectsMissingLicenseAndUnsafeDirectory()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            var payload = Path.Combine(root, "payload");
+            Directory.CreateDirectory(payload);
+
+            var manifest = new InstallerManifest
+            {
+                Application = new ApplicationManifest { Id = "demo", Name = "Demo", Version = "1.0", Executable = "Demo.exe" },
+                Installation = new InstallationManifest { Directory = "..\\evil" },
+                License = new LicenseManifest { File = "ignored" }
+            };
+
+            var result = ManifestValidator.ValidatePackage(manifest, payload);
+            Assert.Contains(result.Errors, x => x.Contains("installation.directory", StringComparison.Ordinal));
+            Assert.Contains(result.Errors, x => x.Contains("license", StringComparison.Ordinal));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void ValidatePackage_RejectsMissingPackagedIcon()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            var payload = Path.Combine(root, "payload");
+            Directory.CreateDirectory(payload);
+            File.WriteAllText(Path.Combine(payload, "LICENSE.txt"), "license");
+
+            var manifest = new InstallerManifest
+            {
+                Application = new ApplicationManifest { Id = "demo", Name = "Demo", Version = "1.0", Executable = "Demo.exe", Icon = "icon.ico" },
+                Installation = new InstallationManifest { Directory = "{LocalAppData}/Programs/Demo" },
+                License = new LicenseManifest { File = "ignored" }
+            };
+
+            var result = ManifestValidator.ValidatePackage(manifest, payload);
+            Assert.Contains(result.Errors, x => x.Contains("application.icon", StringComparison.Ordinal));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void CopySafely_CopiesRecursivelyAndTracksCreatedDirectories()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            var source = Path.Combine(root, "source");
+            Directory.CreateDirectory(Path.Combine(source, "nested"));
+            File.WriteAllText(Path.Combine(source, "nested", "a.txt"), "a");
+            File.WriteAllText(Path.Combine(source, "b.txt"), "b");
+
+            var destination = Path.Combine(root, "destination");
+            Directory.CreateDirectory(destination);
+            var existing = Path.Combine(destination, "existing");
+            Directory.CreateDirectory(existing);
+            File.WriteAllText(Path.Combine(existing, "keep.txt"), "keep");
+
+            var result = FileInventory.CopySafely(source, destination);
+
+            Assert.Equal(["b.txt", Path.Combine("nested", "a.txt")], result.Files);
+            Assert.Equal("a", File.ReadAllText(Path.Combine(destination, "nested", "a.txt")));
+            Assert.Equal("keep", File.ReadAllText(Path.Combine(existing, "keep.txt")));
+            Assert.Contains(Path.GetFullPath(Path.Combine(destination, "nested")), result.CreatedDirectories);
+            Assert.DoesNotContain(Path.GetFullPath(existing), result.CreatedDirectories);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void CopySafely_ThrowsWhenCancelled()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            var source = Path.Combine(root, "source");
+            Directory.CreateDirectory(source);
+            File.WriteAllText(Path.Combine(source, "a.txt"), "a");
+
+            var destination = Path.Combine(root, "destination");
+            Directory.CreateDirectory(destination);
+
+            using var cts = new CancellationTokenSource();
+            cts.Cancel();
+
+            Assert.Throws<OperationCanceledException>(
+                () => FileInventory.CopySafely(source, destination, cancellationToken: cts.Token));
+            Assert.False(File.Exists(Path.Combine(destination, "a.txt")));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void CopySafely_ReportsProgress()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            var source = Path.Combine(root, "source");
+            Directory.CreateDirectory(source);
+            File.WriteAllText(Path.Combine(source, "a.txt"), "a");
+            File.WriteAllText(Path.Combine(source, "b.txt"), "b");
+            File.WriteAllText(Path.Combine(source, "c.txt"), "c");
+
+            var destination = Path.Combine(root, "destination");
+            Directory.CreateDirectory(destination);
+
+            var progress = new CollectingProgress<FileCopyProgress>();
+            var result = FileInventory.CopySafely(source, destination, progress);
+
+            Assert.Equal(3, progress.Values.Count);
+            Assert.Equal(result.Files, progress.Values.Select(v => v.RelativePath));
+            Assert.Equal(1, progress.Values[0].Current);
+            Assert.Equal(3, progress.Values[^1].Current);
+            Assert.All(progress.Values, v => Assert.Equal(3, v.Total));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    private sealed class CollectingProgress<T> : IProgress<T>
+    {
+        public List<T> Values { get; } = [];
+        public void Report(T value) => Values.Add(value);
+    }
 }

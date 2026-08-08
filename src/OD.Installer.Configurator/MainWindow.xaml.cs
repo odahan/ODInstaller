@@ -181,8 +181,8 @@ public partial class MainWindow : Window
 
         var dialog = new OpenFileDialog
         {
-            Title = "Ouvrir une configuration",
-            Filter = "Configuration JSON (*.json)|*.json|Tous les fichiers (*.*)|*.*",
+            Title = "Open configuration",
+            Filter = "Configuration JSON (*.json)|*.json|All files (*.*)|*.*",
             InitialDirectory = GetLastConfigurationDirectory()
         };
 
@@ -198,11 +198,11 @@ public partial class MainWindow : Window
         catch (System.Text.Json.JsonException exception)
         {
             // Report JSON parsing errors with the line number when available.
-            var line = exception.LineNumber is null ? "" : $" (ligne {exception.LineNumber.Value + 1})";
+            var line = exception.LineNumber is null ? "" : $" (line {exception.LineNumber.Value + 1})";
             MessageBox.Show(
                 this,
-                $"Le fichier sélectionné n'est pas un JSON de configuration valide{line}.\n\nLes commentaires et les virgules finales sont acceptés. Corrigez la syntaxe puis réessayez.",
-                "Ouverture impossible",
+                $"The selected file is not a valid configuration JSON{line}.\n\nComments and trailing commas are accepted. Fix the syntax and try again.",
+                "Unable to open",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
         }
@@ -210,8 +210,8 @@ public partial class MainWindow : Window
         {
             MessageBox.Show(
                 this,
-                $"Ce fichier ne peut pas être ouvert.\n\n{exception.Message}",
-                "Ouverture impossible",
+                $"This file cannot be opened.\n\n{exception.Message}",
+                "Unable to open",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
         }
@@ -224,7 +224,7 @@ public partial class MainWindow : Window
         {
             var dialog = new SaveFileDialog
             {
-                Title = "Enregistrer la configuration",
+                Title = "Save configuration",
                 Filter = "Configuration JSON (*.json)|*.json",
                 FileName = currentPath is null ? "installer.json" : Path.GetFileName(currentPath),
                 DefaultExt = ".json"
@@ -244,20 +244,14 @@ public partial class MainWindow : Window
             AddRecentFile(currentPath);
             isDirty = false;
             UpdateTitle();
-            StatusText.Text = "Configuration enregistrée.";
-            MessageBox.Show(
-                this,
-                "La configuration a été enregistrée avec succès.",
-                "Enregistrement réussi",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
+            StatusText.Text = "Configuration saved.";
         }
         catch (Exception exception)
         {
             MessageBox.Show(
                 this,
-                $"La configuration n'a pas pu être enregistrée.\n\n{exception.Message}",
-                "Enregistrement impossible",
+                $"The configuration could not be saved.\n\n{exception.Message}",
+                "Unable to save",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
         }
@@ -273,36 +267,36 @@ public partial class MainWindow : Window
 
         if (validation.IsValid)
         {
-            StatusText.Text = "La configuration est valide et prête à être générée.";
-            MessageBox.Show(this, "La configuration est valide.", "Vérification", MessageBoxButton.OK, MessageBoxImage.Information);
+            StatusText.Text = "The configuration is valid and ready to be generated.";
+            MessageBox.Show(this, "The configuration is valid.", "Validation", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
         var errors = string.Join(Environment.NewLine, validation.Errors.Select(error => "• " + error));
-        StatusText.Text = $"{validation.Errors.Count} problème(s) à corriger.";
+        StatusText.Text = $"{validation.Errors.Count} issue(s) to fix.";
         MessageBox.Show(
             this,
-            $"La configuration contient les problèmes suivants :\n\n{errors}",
-            "Vérification",
+            $"The configuration has the following issues:\n\n{errors}",
+            "Validation",
             MessageBoxButton.OK,
             MessageBoxImage.Warning);
     }
 
     // Browse button handlers: open the relevant file/folder picker for each field.
     private void BrowseSource_Click(object sender, RoutedEventArgs e) =>
-        BrowseFolder(SourceDirectoryBox, "Choisir le dossier contenant l'application");
+        BrowseFolder(SourceDirectoryBox, "Choose the folder containing the application");
 
     private void BrowseOutput_Click(object sender, RoutedEventArgs e) =>
-        BrowseFolder(OutputDirectoryBox, "Choisir le dossier de sortie");
+        BrowseFolder(OutputDirectoryBox, "Choose the output folder");
 
     private void BrowseIcon_Click(object sender, RoutedEventArgs e) =>
-        BrowseFile(IconBox, "Choisir une icône", "Icône (*.ico)|*.ico|Tous les fichiers (*.*)|*.*");
+        BrowseFile(IconBox, "Choose an icon", "Icon (*.ico)|*.ico|All files (*.*)|*.*");
 
     private void BrowseWelcomeImage_Click(object sender, RoutedEventArgs e) =>
-        BrowseFile(WelcomeImageBox, "Choisir une image d'accueil", "Image PNG (*.png)|*.png|Tous les fichiers (*.*)|*.*");
+        BrowseFile(WelcomeImageBox, "Choose a welcome image", "PNG image (*.png)|*.png|All files (*.*)|*.*");
 
     private void BrowseLicense_Click(object sender, RoutedEventArgs e) =>
-        BrowseFile(LicenseFileBox, "Choisir le fichier de licence", "Fichiers texte (*.txt)|*.txt|Tous les fichiers (*.*)|*.*");
+        BrowseFile(LicenseFileBox, "Choose the license file", "Text files (*.txt)|*.txt|All files (*.*)|*.*");
 
     // Shows a folder browser dialog and writes the selected path into the target text box.
     private void BrowseFolder(System.Windows.Controls.TextBox target, string description)
@@ -354,8 +348,8 @@ public partial class MainWindow : Window
             UpdateRecentFilesMenu();
             MessageBox.Show(
                 this,
-                "Ce fichier récent est introuvable. Il a été retiré de la liste.",
-                "Fichier introuvable",
+                "This recent file was not found. It has been removed from the list.",
+                "File not found",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
             return;
@@ -382,18 +376,18 @@ public partial class MainWindow : Window
         AddRecentFile(path);
         isDirty = false;
         UpdateTitle();
-        StatusText.Text = "Configuration ouverte.";
+        StatusText.Text = "Configuration opened.";
     }
 
     private void ShowOpenError(Exception exception)
     {
         if (exception is System.Text.Json.JsonException jsonException)
         {
-            var line = jsonException.LineNumber is null ? "" : $" (ligne {jsonException.LineNumber.Value + 1})";
+            var line = jsonException.LineNumber is null ? "" : $" (line {jsonException.LineNumber.Value + 1})";
             MessageBox.Show(
                 this,
-                $"Le fichier sélectionné n'est pas un JSON de configuration valide{line}.\n\nLes commentaires et les virgules finales sont acceptés. Corrigez la syntaxe puis réessayez.",
-                "Ouverture impossible",
+                $"The selected file is not a valid configuration JSON{line}.\n\nComments and trailing commas are accepted. Fix the syntax and try again.",
+                "Unable to open",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
             return;
@@ -401,8 +395,8 @@ public partial class MainWindow : Window
 
         MessageBox.Show(
             this,
-            $"Ce fichier ne peut pas être ouvert.\n\n{exception.Message}",
-            "Ouverture impossible",
+            $"This file cannot be opened.\n\n{exception.Message}",
+            "Unable to open",
             MessageBoxButton.OK,
             MessageBoxImage.Error);
     }
@@ -463,7 +457,7 @@ public partial class MainWindow : Window
 
         if (recentFiles.Count == 0)
         {
-            RecentFilesMenu.Items.Add(new System.Windows.Controls.MenuItem { Header = "Aucun fichier récent", IsEnabled = false });
+            RecentFilesMenu.Items.Add(new System.Windows.Controls.MenuItem { Header = "No recent files", IsEnabled = false });
             return;
         }
 
@@ -471,7 +465,7 @@ public partial class MainWindow : Window
         {
             var menuItem = new System.Windows.Controls.MenuItem
             {
-                Header = file.LastUsed.ToLocalTime().ToString("dd/MM/yyyy HH:mm"),
+                Header = file.LastUsed.ToLocalTime().ToString("yyyy-MM-dd HH:mm"),
                 ToolTip = file.Path,
                 Tag = file.Path
             };
@@ -485,8 +479,8 @@ public partial class MainWindow : Window
     private bool ConfirmDiscardChanges() =>
         !isDirty || MessageBox.Show(
             this,
-            "Les modifications non enregistrées seront perdues. Continuer ?",
-            "Modifications non enregistrées",
+            "Unsaved changes will be lost. Continue?",
+            "Unsaved changes",
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning) == MessageBoxResult.Yes;
 
