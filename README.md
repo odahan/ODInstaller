@@ -2,6 +2,8 @@
 
 OD Installer is a small .NET 10 Windows installer generator. The MVP targets per-user desktop applications such as OD.HarmoTools.
 
+**Site:** visit [OD.Installer](https://e-naxos.com/installer/)!
+
 ## Build and generate
 
 1. Build the solution: `dotnet build OD.Installer.slnx -c Release`.
