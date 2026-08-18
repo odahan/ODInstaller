@@ -31,6 +31,9 @@ public partial class MainWindow : Window
     // Indicates whether the form has unsaved changes.
     private bool isDirty;
 
+    // Serialized form state at the last reset, open or save operation.
+    private string cleanFormState = string.Empty;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -77,7 +80,7 @@ public partial class MainWindow : Window
         WelcomeImageBox.Text = "";
 
         sourceFolders.Clear();
-        sourceFolders.Add(new SourceFolderRow { Source = "", Destination = "." });
+        AddSourceFolderRow(new SourceFolderRow { Source = "", Destination = "." });
         InstallationDirectoryBox.Text = "{LocalAppData}/Programs/<Application>";
         AllowDirectorySelectionBox.IsChecked = true;
         LicenseFileBox.Text = "";
@@ -88,8 +91,7 @@ public partial class MainWindow : Window
         OutputDirectoryBox.Text = "";
         OutputFileNameBox.Text = "";
 
-        isDirty = false;
-        UpdateTitle();
+        MarkClean();
     }
 
     // Builds an InstallerManifest instance from the current values of the form fields.
@@ -160,7 +162,7 @@ public partial class MainWindow : Window
 
         foreach (var folder in manifest.Source.EffectiveFolders())
         {
-            sourceFolders.Add(new SourceFolderRow
+            AddSourceFolderRow(new SourceFolderRow
             {
                 Source = folder.Directory,
                 Destination = folder.Destination
@@ -267,8 +269,7 @@ public partial class MainWindow : Window
         {
             File.WriteAllText(currentPath, System.Text.Json.JsonSerializer.Serialize(GetManifest(), JsonFiles.Options));
             AddRecentFile(currentPath);
-            isDirty = false;
-            UpdateTitle();
+            MarkClean();
             StatusText.Text = "Configuration saved.";
         }
         catch (Exception exception)
@@ -323,7 +324,7 @@ public partial class MainWindow : Window
     // Adds a new source folder row to the list.
     private void AddSourceFolder_Click(object sender, RoutedEventArgs e)
     {
-        sourceFolders.Add(new SourceFolderRow { Source = "", Destination = "." });
+        AddSourceFolderRow(new SourceFolderRow { Source = "", Destination = "." });
         MarkDirty();
     }
 
@@ -437,9 +438,15 @@ public partial class MainWindow : Window
         SetManifest(JsonFiles.ReadManifest(path));
         currentPath = path;
         AddRecentFile(path);
-        isDirty = false;
-        UpdateTitle();
+        MarkClean();
         StatusText.Text = "Configuration opened.";
+    }
+
+    // Adds a source folder row and tracks edits made through its data bindings.
+    private void AddSourceFolderRow(SourceFolderRow row)
+    {
+        row.PropertyChanged += (_, _) => MarkDirty();
+        sourceFolders.Add(row);
     }
 
     private void ShowOpenError(Exception exception)
@@ -550,12 +557,27 @@ public partial class MainWindow : Window
     // Prevents the window from closing if there are unsaved changes the user did not confirm to discard.
     private void Window_Closing(object? sender, CancelEventArgs e) => e.Cancel = !ConfirmDiscardChanges();
 
-    // Marks the form as having unsaved changes and refreshes the window title accordingly.
+    // Re-evaluates whether the current form differs from its last clean state.
     private void MarkDirty()
     {
-        isDirty = true;
+        isDirty = !string.Equals(
+            cleanFormState,
+            CaptureFormState(),
+            StringComparison.Ordinal);
         UpdateTitle();
     }
+
+    // Records the current form as clean after initialization, opening or saving.
+    private void MarkClean()
+    {
+        cleanFormState = CaptureFormState();
+        isDirty = false;
+        UpdateTitle();
+    }
+
+    // Produces a stable representation used to compare the current form with its clean state.
+    private string CaptureFormState() =>
+        System.Text.Json.JsonSerializer.Serialize(GetManifest(), JsonFiles.Options);
 
     // Updates the window title to reflect the dirty state and the current file name (if any).
     private void UpdateTitle()
