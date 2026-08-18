@@ -325,34 +325,27 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Installs the application files and records its system information.
+    /// Installs or updates the application and records its system information.
     /// </summary>
     /// <returns>
     /// <see langword="true"/> if the installation completes successfully;
-    /// <see langword="false"/> if the user cancels replacing an existing
+    /// <see langword="false"/> if the user cancels updating an existing
     /// installation, cancels the running installation, or if an error occurs.
     /// </returns>
     /// <remarks>
-    /// The method copies the application files, icon, and uninstaller, creates the requested
-    /// shortcuts, registers the application in the Windows Registry, and writes the installation
-    /// manifest. Copying runs on a background thread with progress reporting and cancellation.
-    /// On failure or cancellation, every file, shortcut, and directory created is removed.
+    /// The new application directory is prepared beside the active version and
+    /// swapped only after every file is ready. The previous directory and every
+    /// overwritten external file remain available until shortcuts and registry
+    /// registration succeed, allowing the complete installation to be restored.
     /// </remarks>
     private async Task<bool> InstallAsync()
     {
         var uninstallKey =
             $"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{_manifest.Application.Id}";
 
-        if (Registry.CurrentUser.OpenSubKey(uninstallKey) is not null &&
-            MessageBox.Show(
-                "An installation with this id already exists. Replace it?",
-                "Existing installation",
-                MessageBoxButton.YesNo) != MessageBoxResult.Yes)
-        {
-            return false;
-        }
-
-        if (!SafePaths.IsCompatibleInstallDirectory(_installDirectory, _manifest.Application.Id))
+        if (!SafePaths.IsCompatibleInstallDirectory(
+                _installDirectory,
+                _manifest.Application.Id))
         {
             MessageBox.Show(
                 "The destination folder already contains files that do not belong "
@@ -364,160 +357,211 @@ public partial class MainWindow : Window
             return false;
         }
 
-            var createdFiles = new List<string>();
-            var createdDirectories = new List<string>();
-            var createdShortcuts = new List<string>();
-            var externalFiles = new List<string>();
-            var externalDirectories = new List<string>();
+        var previousInstallation = ReadPreviousInstallation(_installDirectory);
+        bool registeredInstallationExists;
+        string? registeredLocation;
 
-            // Snapshot the shortcuts that already exist so rollback only removes
-            // the ones that were actually created by this installation.
-            var plannedShortcuts = ShortcutWriter.GetShortcutPaths(
-                _manifest,
-                StartMenuBox.IsChecked == true,
-                DesktopBox.IsChecked == true);
+        using (var existingRegistryKey = Registry.CurrentUser.OpenSubKey(uninstallKey))
+        {
+            registeredInstallationExists = existingRegistryKey is not null;
+            registeredLocation = existingRegistryKey?.GetValue("InstallLocation") as string;
+        }
 
-            var preExistingShortcuts = plannedShortcuts
-                .Where(File.Exists)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(registeredLocation)
+            && !PathsEqual(registeredLocation, _installDirectory))
+        {
+            MessageBox.Show(
+                $"{_manifest.Application.Name} is already registered in another folder:"
+                + $"\n\n{registeredLocation}\n\nUse that folder for the update or "
+                + "uninstall the existing version first.",
+                "Existing installation",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return false;
+        }
 
-            var installDirectoryExisted = Directory.Exists(_installDirectory);
+        if (previousInstallation is not null
+            && !string.IsNullOrWhiteSpace(previousInstallation.InstallDirectory)
+            && !PathsEqual(previousInstallation.InstallDirectory, _installDirectory))
+        {
+            MessageBox.Show(
+                "The installed manifest refers to another installation folder. "
+                + "Uninstall the existing version before choosing a new folder.",
+                "Existing installation",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return false;
+        }
 
-            _installCts = new CancellationTokenSource();
+        if (!ConfirmInstallOrUpdate(
+                previousInstallation,
+                registeredInstallationExists))
+        {
+            return false;
+        }
 
-            try
+        if (previousInstallation is not null
+            && !CanAcquireExclusiveAccess(
+                _installDirectory,
+                out var inaccessibleFile))
+        {
+            MessageBox.Show(
+                $"The current installation is still in use or cannot be modified:"
+                + $"\n\n{inaccessibleFile}\n\nClose {_manifest.Application.Name} "
+                + "and try again.",
+                "Application in use",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return false;
+        }
+
+        var registrySnapshot = CaptureRegistry(uninstallKey);
+        var plannedShortcuts = ShortcutWriter.GetShortcutPaths(
+            _manifest,
+            StartMenuBox.IsChecked == true,
+            DesktopBox.IsChecked == true);
+        var rootFiles = new List<string>();
+        var externalFiles = new List<string>();
+        var externalDirectories = new List<string>();
+        var fileBackups = new FileBackupTransaction();
+        InstallationDirectoryTransaction? directoryTransaction = null;
+        var registryChanged = false;
+        _installCts = new CancellationTokenSource();
+
+        try
+        {
+            ShowInstalling(true);
+            directoryTransaction = new InstallationDirectoryTransaction(
+                _installDirectory);
+
+            InstallerLog.Info(
+                previousInstallation is null
+                    ? $"Installing to {_installDirectory}."
+                    : $"Updating {_manifest.Application.Name} from "
+                      + $"{previousInstallation.Version} to {_manifest.Application.Version}.");
+
+            var folders = _manifest.Source.EffectiveFolders();
+            var appRoot = Path.Combine(_payloadDirectory, "app");
+            var copies = new List<(string Source, string Target, string Prefix, bool External)>();
+            var total = 0;
+
+            for (var index = 0; index < folders.Count; index++)
             {
-                ShowInstalling(true);
+                var folder = folders[index];
 
-                InstallerLog.Info($"Installing to {_installDirectory}.");
-
-                // Resolve each source folder against its destination. Folders
-                // mapped to the installation root or to a relative subfolder
-                // are copied inside the install directory; folders mapped to
-                // an absolute destination are copied to their resolved path.
-                var folders = _manifest.Source.EffectiveFolders();
-                var appRoot = Path.Combine(_payloadDirectory, "app");
-                var copies = new List<(string Source, string Target, string Prefix, bool External)>();
-                var total = 0;
-
-                for (var index = 0; index < folders.Count; index++)
+                if (SafePaths.IsExternalDestination(folder.Destination))
                 {
-                    var folder = folders[index];
+                    var destination = SafePaths.ResolveInstallDirectory(
+                        folder.Destination,
+                        _manifest.Application.Name);
 
-                    if (SafePaths.IsExternalDestination(folder.Destination))
+                    if (!IsCompatibleExternalDirectory(
+                            destination,
+                            previousInstallation))
                     {
-                        var destination = SafePaths.ResolveInstallDirectory(
-                            folder.Destination,
-                            _manifest.Application.Name);
-
-                        if (!SafePaths.IsCompatibleInstallDirectory(
-                                destination,
-                                _manifest.Application.Id))
-                        {
-                            MessageBox.Show(
-                                "The destination folder already contains files "
-                                + $"that do not belong to {_manifest.Application.Name}:"
-                                + $"\n\n{destination}\n\nChoose an empty folder or the "
-                                + "folder of a previous installation of this application.",
-                                "Setup",
-                                MessageBoxButton.OK,
-                                MessageBoxImage.Warning);
-                            return false;
-                        }
-
-                        var source = Path.Combine(
-                            _payloadDirectory,
-                            "external",
-                            index.ToString());
-
-                        if (Directory.Exists(source))
-                        {
-                            total += FileInventory.Enumerate(source).Count;
-                            copies.Add((source, destination, "", true));
-                        }
+                        MessageBox.Show(
+                            "The external destination already contains files that "
+                            + $"do not belong to {_manifest.Application.Name}:"
+                            + $"\n\n{destination}",
+                            "Setup",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Warning);
+                        directoryTransaction.Rollback();
+                        return false;
                     }
-                    else
+
+                    var source = Path.Combine(
+                        _payloadDirectory,
+                        "external",
+                        index.ToString(
+                            System.Globalization.CultureInfo.InvariantCulture));
+
+                    if (Directory.Exists(source))
                     {
-                        var relative = SafePaths.IsRootDestination(folder.Destination)
-                            ? ""
-                            : folder.Destination.Trim('/', '\\');
-
-                        var source = relative.Length == 0
-                            ? appRoot
-                            : Path.Combine(appRoot, relative);
-
-                        var target = relative.Length == 0
-                            ? _installDirectory
-                            : Path.Combine(_installDirectory, relative);
-
-                        if (Directory.Exists(source))
-                        {
-                            total += FileInventory.Enumerate(source).Count;
-                            copies.Add((source, target, relative, false));
-                        }
+                        total += FileInventory.Enumerate(source).Count;
+                        copies.Add((source, destination, "", true));
                     }
+
+                    continue;
                 }
 
-                Directory.CreateDirectory(_installDirectory);
+                var relative = SafePaths.IsRootDestination(folder.Destination)
+                    ? ""
+                    : folder.Destination.Trim('/', '\\');
+                var sourceDirectory = relative.Length == 0
+                    ? appRoot
+                    : Path.Combine(appRoot, relative);
+                var targetDirectory = relative.Length == 0
+                    ? directoryTransaction.StagingDirectory
+                    : Path.Combine(directoryTransaction.StagingDirectory, relative);
 
-                IProgress<FileCopyProgress> progress = new Progress<FileCopyProgress>(update =>
+                if (Directory.Exists(sourceDirectory))
                 {
-                    InstallProgress.Value = total == 0
-                        ? 100
-                        : (double)update.Current / total * 100;
-                    ProgressText.Text =
-                        $"Copying files ({update.Current} of {total}): {update.RelativePath}";
-                });
+                    total += FileInventory.Enumerate(sourceDirectory).Count;
+                    copies.Add((sourceDirectory, targetDirectory, relative, false));
+                }
+            }
 
-                await Task.Run(
-                    () =>
+            IProgress<FileCopyProgress> progress = new Progress<FileCopyProgress>(update =>
+            {
+                InstallProgress.Value = total == 0
+                    ? 100
+                    : (double)update.Current / total * 100;
+                ProgressText.Text =
+                    $"Copying files ({update.Current} of {total}): {update.RelativePath}";
+            });
+
+            await Task.Run(
+                () =>
+                {
+                    var offset = 0;
+
+                    foreach (var (source, target, prefix, external) in copies)
                     {
-                        var offset = 0;
+                        IProgress<FileCopyProgress> folderProgress =
+                            new Progress<FileCopyProgress>(
+                                update => progress.Report(new FileCopyProgress(
+                                    offset + update.Current,
+                                    total,
+                                    update.RelativePath)));
 
-                        foreach (var (source, target, prefix, external) in copies)
+                        var result = FileInventory.CopySafely(
+                            source,
+                            target,
+                            folderProgress,
+                            _installCts.Token,
+                            external ? fileBackups.Capture : null);
+
+                        if (external)
                         {
-                            IProgress<FileCopyProgress> folderProgress =
-                                new Progress<FileCopyProgress>(
-                                    update => progress.Report(new FileCopyProgress(
-                                        offset + update.Current,
-                                        total,
-                                        update.RelativePath)));
-
-                            var result = FileInventory.CopySafely(
-                                source,
-                                target,
-                                folderProgress,
-                                _installCts.Token);
-
-                            if (external)
-                            {
-                                externalFiles.AddRange(
-                                    result.Files.Select(file => Path.Combine(target, file)));
-                                externalDirectories.AddRange(result.CreatedDirectories);
-                            }
-                            else
-                            {
-                                createdFiles.AddRange(
-                                    prefix.Length == 0
-                                        ? result.Files
-                                        : result.Files.Select(file => Path.Combine(prefix, file)));
-                                createdDirectories.AddRange(result.CreatedDirectories);
-                            }
-
-                            offset += result.Files.Count;
+                            externalFiles.AddRange(
+                                result.Files.Select(file => Path.Combine(target, file)));
+                            externalDirectories.AddRange(result.CreatedDirectories);
                         }
-                    },
-                    _installCts.Token);
+                        else
+                        {
+                            rootFiles.AddRange(
+                                prefix.Length == 0
+                                    ? result.Files
+                                    : result.Files.Select(file => Path.Combine(prefix, file)));
+                        }
+
+                        offset += result.Files.Count;
+                    }
+                },
+                _installCts.Token);
 
             var packagedIcon = Path.Combine(_payloadDirectory, "application.ico");
+
             if (File.Exists(packagedIcon))
             {
                 File.Copy(
                     packagedIcon,
-                    Path.Combine(_installDirectory, "application.ico"),
-                    true);
-
-                createdFiles.Add("application.ico");
+                    Path.Combine(
+                        directoryTransaction.StagingDirectory,
+                        "application.ico"),
+                    overwrite: true);
+                rootFiles.Add("application.ico");
             }
 
             var uninstaller = Path.Combine(
@@ -525,61 +569,95 @@ public partial class MainWindow : Window
                 "OD.Installer.Uninstaller.exe");
 
             File.Copy(
-                Path.Combine(_payloadDirectory, "uninstaller", "OD.Installer.Uninstaller.exe"),
-                uninstaller,
-                true);
+                Path.Combine(
+                    _payloadDirectory,
+                    "uninstaller",
+                    "OD.Installer.Uninstaller.exe"),
+                Path.Combine(
+                    directoryTransaction.StagingDirectory,
+                    "OD.Installer.Uninstaller.exe"),
+                overwrite: true);
+            rootFiles.Add("OD.Installer.Uninstaller.exe");
 
-            createdFiles.Add("OD.Installer.Uninstaller.exe");
-
-            foreach (var shortcut in ShortcutWriter.Create(
-                _manifest,
-                _installDirectory,
-                StartMenuBox.IsChecked == true,
-                DesktopBox.IsChecked == true))
-            {
-                if (!preExistingShortcuts.Contains(shortcut))
-                {
-                    createdShortcuts.Add(shortcut);
-                }
-            }
-
-            using var key = Registry.CurrentUser.CreateSubKey(uninstallKey);
-            key.SetValue("DisplayName", _manifest.Application.Name);
-            key.SetValue("DisplayVersion", _manifest.Application.Version);
-            key.SetValue("Publisher", _manifest.Application.Publisher);
-            key.SetValue(
-                "InstallDate",
-                DateTime.Today.ToString(
-                    "yyyyMMdd",
-                    System.Globalization.CultureInfo.InvariantCulture));
-            key.SetValue("InstallLocation", _installDirectory);
-            key.SetValue(
-                "DisplayIcon",
-                File.Exists(Path.Combine(_installDirectory, "application.ico"))
-                    ? Path.Combine(_installDirectory, "application.ico")
-                    : Path.Combine(_installDirectory, _manifest.Application.Executable));
-            key.SetValue("UninstallString", $"\"{uninstaller}\"");
-            key.SetValue("NoModify", 1, RegistryValueKind.DWord);
-            key.SetValue("NoRepair", 1, RegistryValueKind.DWord);
+            var allExternalFiles = (previousInstallation?.ExternalFiles ?? [])
+                .Concat(externalFiles)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var allExternalDirectories =
+                (previousInstallation?.ExternalDirectories ?? [])
+                .Concat(externalDirectories)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
 
             JsonFiles.WriteInstalledManifest(
-                Path.Combine(_installDirectory, ".od.installer-installed.json"),
+                Path.Combine(
+                    directoryTransaction.StagingDirectory,
+                    ".od.installer-installed.json"),
                 new InstalledManifest
                 {
                     ApplicationId = _manifest.Application.Id,
                     Version = _manifest.Application.Version,
                     InstallDirectory = _installDirectory,
-                    Files = createdFiles,
+                    Files = rootFiles,
                     Directories = Directory
-                        .GetDirectories(_installDirectory, "*", SearchOption.AllDirectories)
-                        .Select(x => Path.GetRelativePath(_installDirectory, x))
+                        .GetDirectories(
+                            directoryTransaction.StagingDirectory,
+                            "*",
+                            SearchOption.AllDirectories)
+                        .Select(directory => Path.GetRelativePath(
+                            directoryTransaction.StagingDirectory,
+                            directory))
                         .ToList(),
-                    ExternalFiles = externalFiles,
-                    ExternalDirectories = externalDirectories,
+                    ExternalFiles = allExternalFiles,
+                    ExternalDirectories = allExternalDirectories,
                     Shortcuts = plannedShortcuts,
                     RegistryKeys = [uninstallKey],
                     UninstallerPath = uninstaller
                 });
+
+            ProgressText.Text = "Activating the new version...";
+            directoryTransaction.Swap();
+
+            var previousShortcuts = previousInstallation?.Shortcuts ?? [];
+
+            foreach (var shortcut in previousShortcuts
+                         .Concat(plannedShortcuts)
+                         .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                fileBackups.Capture(shortcut);
+            }
+
+            foreach (var obsoleteShortcut in previousShortcuts.Except(
+                         plannedShortcuts,
+                         StringComparer.OrdinalIgnoreCase))
+            {
+                if (File.Exists(obsoleteShortcut))
+                {
+                    File.Delete(obsoleteShortcut);
+                }
+            }
+
+            ShortcutWriter.Create(
+                _manifest,
+                _installDirectory,
+                StartMenuBox.IsChecked == true,
+                DesktopBox.IsChecked == true);
+
+            registryChanged = true;
+            WriteRegistry(uninstallKey, uninstaller);
+
+            if (!directoryTransaction.Complete())
+            {
+                InstallerLog.Info(
+                    $"The previous installation backup could not be removed: "
+                    + directoryTransaction.BackupDirectory);
+            }
+
+            if (!fileBackups.Complete())
+            {
+                InstallerLog.Info(
+                    "Temporary rollback files could not be removed.");
+            }
 
             InstallerLog.Info("Installation completed.");
             InstallProgress.Value = 100;
@@ -588,36 +666,44 @@ public partial class MainWindow : Window
         catch (OperationCanceledException)
         {
             InstallerLog.Info("Installation cancelled.");
-            Rollback(
-                _installDirectory,
-                installDirectoryExisted,
-                createdFiles,
-                createdDirectories,
-                createdShortcuts,
-                externalFiles,
+            var rollbackSucceeded = RollbackInstallation(
+                directoryTransaction,
+                fileBackups,
                 externalDirectories,
-                uninstallKey);
+                uninstallKey,
+                registrySnapshot,
+                registryChanged);
             MessageBox.Show(
-                "The installation was cancelled.",
+                rollbackSucceeded
+                    ? "The installation was cancelled. The previous version has been restored."
+                    : "The installation was cancelled, but automatic restoration was incomplete. "
+                      + "See the installation log for details.",
                 "Setup",
                 MessageBoxButton.OK,
-                MessageBoxImage.Information);
+                rollbackSucceeded
+                    ? MessageBoxImage.Information
+                    : MessageBoxImage.Error);
             return false;
         }
         catch (Exception ex)
         {
             InstallerLog.Error(ex);
-            Rollback(
-                _installDirectory,
-                installDirectoryExisted,
-                createdFiles,
-                createdDirectories,
-                createdShortcuts,
-                externalFiles,
+            var rollbackSucceeded = RollbackInstallation(
+                directoryTransaction,
+                fileBackups,
                 externalDirectories,
-                uninstallKey);
+                uninstallKey,
+                registrySnapshot,
+                registryChanged);
+            var closeApplicationHint = ex is IOException or UnauthorizedAccessException
+                ? "\n\nClose the application and try again."
+                : "";
+            var rollbackMessage = rollbackSucceeded
+                ? "\n\nThe previous version has been restored."
+                : "\n\nAutomatic restoration was incomplete. See the installation log.";
+
             MessageBox.Show(
-                $"Installation failed:\n\n{ex.Message}",
+                $"Installation failed:\n\n{ex.Message}{closeApplicationHint}{rollbackMessage}",
                 "Setup",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
@@ -652,105 +738,296 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Removes everything created by a failed or cancelled installation:
-    /// copied files (inside and outside the install directory), new
-    /// shortcuts, newly created directories, and the uninstall registry key.
+    /// Reads the installed manifest from an existing target directory.
     /// </summary>
-    /// <param name="installDirectory">Target installation directory.</param>
-    /// <param name="installDirectoryExisted">
-    /// <see langword="true"/> when the directory existed before the installation.
-    /// </param>
-    /// <param name="createdFiles">Relative paths of the copied files.</param>
-    /// <param name="createdDirectories">Full paths of the created directories.</param>
-    /// <param name="createdShortcuts">Full paths of the created shortcuts.</param>
-    /// <param name="externalFiles">Absolute paths of files copied outside the install directory.</param>
-    /// <param name="externalDirectories">Absolute paths of directories created outside the install directory.</param>
-    /// <param name="uninstallKey">Uninstall registry key to remove.</param>
-    private static void Rollback(
-        string installDirectory,
-        bool installDirectoryExisted,
-        IEnumerable<string> createdFiles,
-        IEnumerable<string> createdDirectories,
-        IEnumerable<string> createdShortcuts,
-        IEnumerable<string> externalFiles,
-        IEnumerable<string> externalDirectories,
-        string uninstallKey)
+    private static InstalledManifest? ReadPreviousInstallation(string directory)
     {
-        foreach (var relative in createdFiles)
+        var path = Path.Combine(directory, ".od.installer-installed.json");
+        return File.Exists(path)
+            ? JsonFiles.ReadInstalledManifest(path)
+            : null;
+    }
+
+    /// <summary>
+    /// Asks the user to confirm an update, reinstall, downgrade, or repair.
+    /// </summary>
+    private bool ConfirmInstallOrUpdate(
+        InstalledManifest? previousInstallation,
+        bool registeredInstallationExists)
+    {
+        if (previousInstallation is null)
         {
-            var path = Path.Combine(installDirectory, relative);
-            TryDeleteFile(path);
+            return !registeredInstallationExists
+                || MessageBox.Show(
+                    $"A registered installation of {_manifest.Application.Name} was found, "
+                    + "but its installed files are missing. Reinstall it?",
+                    "Repair installation",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question) == MessageBoxResult.Yes;
         }
 
-        foreach (var file in externalFiles)
+        var packageVersion = Version.Parse(_manifest.Application.Version);
+        string message;
+        string title;
+        MessageBoxImage image;
+
+        if (!Version.TryParse(previousInstallation.Version, out var installedVersion))
         {
-            TryDeleteFile(file);
+            title = "Update application";
+            message = $"The installed version of {_manifest.Application.Name} cannot be "
+                + $"identified. Replace it with version {_manifest.Application.Version}?";
+            image = MessageBoxImage.Warning;
+        }
+        else if (packageVersion > installedVersion)
+        {
+            title = "Update application";
+            message = $"Update {_manifest.Application.Name} from version "
+                + $"{previousInstallation.Version} to {_manifest.Application.Version}?";
+            image = MessageBoxImage.Question;
+        }
+        else if (packageVersion == installedVersion)
+        {
+            title = "Reinstall application";
+            message = $"Version {_manifest.Application.Version} is already installed. "
+                + "Reinstall it?";
+            image = MessageBoxImage.Question;
+        }
+        else
+        {
+            title = "Install older version";
+            message = $"Version {previousInstallation.Version} is currently installed. "
+                + $"Install older version {_manifest.Application.Version} instead?";
+            image = MessageBoxImage.Warning;
         }
 
-        foreach (var shortcut in createdShortcuts)
+        return MessageBox.Show(
+            message,
+            title,
+            MessageBoxButton.YesNo,
+            image) == MessageBoxResult.Yes;
+    }
+
+    /// <summary>
+    /// Determines whether an external destination is empty, marked for this
+    /// application, or already represented by the previous installed manifest.
+    /// </summary>
+    private bool IsCompatibleExternalDirectory(
+        string directory,
+        InstalledManifest? previousInstallation)
+    {
+        if (SafePaths.IsCompatibleInstallDirectory(
+                directory,
+                _manifest.Application.Id))
         {
-            TryDeleteFile(shortcut);
+            return true;
         }
 
-        // Remove the created directories, deepest first, only when empty.
-        foreach (var directory in createdDirectories
-            .Concat(externalDirectories)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderByDescending(directory => directory.Length))
+        return previousInstallation is not null
+            && previousInstallation.ApplicationId.Equals(
+                _manifest.Application.Id,
+                StringComparison.OrdinalIgnoreCase)
+            && (previousInstallation.ExternalFiles.Any(
+                    path => IsPathInsideDirectory(path, directory))
+                || previousInstallation.ExternalDirectories.Any(
+                    path => IsPathInsideDirectory(path, directory)));
+    }
+
+    /// <summary>
+    /// Determines whether a path is equal to or contained by a directory.
+    /// </summary>
+    private static bool IsPathInsideDirectory(string path, string directory)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var fullDirectory = Path.GetFullPath(
+            Path.TrimEndingDirectorySeparator(directory));
+        var directoryPrefix = fullDirectory + Path.DirectorySeparatorChar;
+
+        return fullPath.Equals(fullDirectory, StringComparison.OrdinalIgnoreCase)
+            || fullPath.StartsWith(directoryPrefix, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Compares two normalized filesystem paths.
+    /// </summary>
+    private static bool PathsEqual(string left, string right) =>
+        Path.GetFullPath(Path.TrimEndingDirectorySeparator(left)).Equals(
+            Path.GetFullPath(Path.TrimEndingDirectorySeparator(right)),
+            StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Checks that no file in the active installation is locked before an update.
+    /// </summary>
+    private static bool CanAcquireExclusiveAccess(
+        string directory,
+        out string? inaccessibleFile)
+    {
+        try
         {
-            TryDeleteDirectoryIfEmpty(directory);
+            foreach (var relative in FileInventory.Enumerate(directory))
+            {
+                var file = Path.Combine(directory, relative);
+                using var stream = new FileStream(
+                    file,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.None);
+            }
+        }
+        catch (IOException exception)
+        {
+            inaccessibleFile = exception.Message;
+            return false;
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            inaccessibleFile = exception.Message;
+            return false;
+        }
+        catch (InvalidDataException exception)
+        {
+            inaccessibleFile = exception.Message;
+            return false;
         }
 
-        // Remove the root when it was created by this installation.
-        if (!installDirectoryExisted)
+        inaccessibleFile = null;
+        return true;
+    }
+
+    /// <summary>
+    /// Captures all values of the application's uninstall registry key.
+    /// </summary>
+    private static RegistrySnapshot CaptureRegistry(string uninstallKey)
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(uninstallKey);
+
+        if (key is null)
         {
-            TryDeleteDirectoryIfEmpty(installDirectory);
+            return new RegistrySnapshot(false, []);
         }
 
+        var values = key.GetValueNames()
+            .Select(name => new RegistryValueSnapshot(
+                name,
+                key.GetValue(
+                    name,
+                    null,
+                    RegistryValueOptions.DoNotExpandEnvironmentNames)!,
+                key.GetValueKind(name)))
+            .ToList();
+
+        return new RegistrySnapshot(true, values);
+    }
+
+    /// <summary>
+    /// Writes the Windows uninstall registration for the new version.
+    /// </summary>
+    private void WriteRegistry(string uninstallKey, string uninstaller)
+    {
+        using var key = Registry.CurrentUser.CreateSubKey(uninstallKey);
+        key.SetValue("DisplayName", _manifest.Application.Name);
+        key.SetValue("DisplayVersion", _manifest.Application.Version);
+        key.SetValue("Publisher", _manifest.Application.Publisher);
+        key.SetValue(
+            "InstallDate",
+            DateTime.Today.ToString(
+                "yyyyMMdd",
+                System.Globalization.CultureInfo.InvariantCulture));
+        key.SetValue("InstallLocation", _installDirectory);
+        key.SetValue(
+            "DisplayIcon",
+            File.Exists(Path.Combine(_installDirectory, "application.ico"))
+                ? Path.Combine(_installDirectory, "application.ico")
+                : Path.Combine(_installDirectory, _manifest.Application.Executable));
+        key.SetValue("UninstallString", $"\"{uninstaller}\"");
+        key.SetValue("NoModify", 1, RegistryValueKind.DWord);
+        key.SetValue("NoRepair", 1, RegistryValueKind.DWord);
+    }
+
+    /// <summary>
+    /// Restores the uninstall registry key to its state before installation.
+    /// </summary>
+    private static void RestoreRegistry(
+        string uninstallKey,
+        RegistrySnapshot snapshot)
+    {
         Registry.CurrentUser.DeleteSubKeyTree(uninstallKey, false);
-    }
 
-    /// <summary>
-    /// Deletes a file, ignoring locking or permission failures so a rollback
-    /// can continue.
-    /// </summary>
-    private static void TryDeleteFile(string path)
-    {
-        try
+        if (!snapshot.Existed)
         {
-            if (File.Exists(path))
-            {
-                File.Delete(path);
-            }
+            return;
         }
-        catch (IOException)
+
+        using var key = Registry.CurrentUser.CreateSubKey(uninstallKey);
+
+        foreach (var value in snapshot.Values)
         {
-        }
-        catch (UnauthorizedAccessException)
-        {
+            key.SetValue(value.Name, value.Value, value.Kind);
         }
     }
 
     /// <summary>
-    /// Deletes an empty directory, ignoring failures so a rollback can continue.
+    /// Restores every resource changed by an interrupted installation.
     /// </summary>
-    private static void TryDeleteDirectoryIfEmpty(string directory)
+    private static bool RollbackInstallation(
+        InstallationDirectoryTransaction? directoryTransaction,
+        FileBackupTransaction fileBackups,
+        IEnumerable<string> externalDirectories,
+        string uninstallKey,
+        RegistrySnapshot registrySnapshot,
+        bool registryChanged)
     {
-        try
+        var succeeded = true;
+
+        void Attempt(Action action)
         {
-            if (Directory.Exists(directory)
-                && !Directory.EnumerateFileSystemEntries(directory).Any())
+            try
             {
-                Directory.Delete(directory);
+                action();
+            }
+            catch (Exception exception)
+            {
+                succeeded = false;
+                InstallerLog.Error(exception);
             }
         }
-        catch (IOException)
+
+        if (registryChanged)
         {
+            Attempt(() => RestoreRegistry(uninstallKey, registrySnapshot));
         }
-        catch (UnauthorizedAccessException)
+
+        Attempt(fileBackups.Rollback);
+
+        foreach (var directory in externalDirectories
+                     .Distinct(StringComparer.OrdinalIgnoreCase)
+                     .OrderByDescending(directory => directory.Length))
         {
+            Attempt(() =>
+            {
+                if (Directory.Exists(directory)
+                    && !Directory.EnumerateFileSystemEntries(directory).Any())
+                {
+                    Directory.Delete(directory);
+                }
+            });
         }
+
+        if (directoryTransaction is not null)
+        {
+            Attempt(directoryTransaction.Rollback);
+        }
+
+        return succeeded;
     }
+
+    private sealed record RegistrySnapshot(
+        bool Existed,
+        IReadOnlyList<RegistryValueSnapshot> Values);
+
+    private sealed record RegistryValueSnapshot(
+        string Name,
+        object Value,
+        RegistryValueKind Kind);
 
     /// <summary>
     /// Removes the temporary payload directory extracted at startup. Called

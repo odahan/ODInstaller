@@ -81,6 +81,10 @@ public static class FileInventory
     /// <param name="destination">Destination root directory.</param>
     /// <param name="progress">Optional progress receiver, invoked once per file.</param>
     /// <param name="cancellationToken">Token checked between file copies.</param>
+    /// <param name="beforeCopy">
+    /// Optional callback invoked with the resolved target path immediately before
+    /// each file is copied. It can be used to capture files for rollback.
+    /// </param>
     /// <returns>The relative paths of the copied files and the directories that were created.</returns>
     /// <exception cref="InvalidDataException">
     /// Thrown when a relative path attempts to escape the target directory.
@@ -89,7 +93,8 @@ public static class FileInventory
         string source,
         string destination,
         IProgress<FileCopyProgress>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Action<string>? beforeCopy = null)
     {
         var files = Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories)
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
@@ -132,6 +137,7 @@ public static class FileInventory
                 existingDirectories.Add(targetDirectory);
             }
 
+            beforeCopy?.Invoke(target);
             File.Copy(file, target, true);
             createdFiles.Add(relative);
 

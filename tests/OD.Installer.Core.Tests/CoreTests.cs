@@ -590,6 +590,155 @@ public sealed class CoreTests
         finally { Directory.Delete(root, true); }
     }
 
+    [Fact]
+    public void InstallationDirectoryTransaction_ReplacesThePreviousDirectory()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var target = Path.Combine(root, "application");
+
+        try
+        {
+            Directory.CreateDirectory(target);
+            File.WriteAllText(Path.Combine(target, "obsolete.txt"), "old");
+
+            var transaction = new InstallationDirectoryTransaction(target);
+            File.WriteAllText(
+                Path.Combine(transaction.StagingDirectory, "current.txt"),
+                "new");
+
+            transaction.Swap();
+
+            Assert.False(File.Exists(Path.Combine(target, "obsolete.txt")));
+            Assert.Equal("new", File.ReadAllText(Path.Combine(target, "current.txt")));
+            Assert.True(File.Exists(Path.Combine(
+                transaction.BackupDirectory,
+                "obsolete.txt")));
+            Assert.True(transaction.Complete());
+            Assert.False(Directory.Exists(transaction.BackupDirectory));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public void InstallationDirectoryTransaction_RollbackRestoresPreviousDirectory()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var target = Path.Combine(root, "application");
+
+        try
+        {
+            Directory.CreateDirectory(target);
+            File.WriteAllText(Path.Combine(target, "application.exe"), "old");
+
+            var transaction = new InstallationDirectoryTransaction(target);
+            File.WriteAllText(
+                Path.Combine(transaction.StagingDirectory, "application.exe"),
+                "new");
+
+            transaction.Swap();
+            transaction.Rollback();
+
+            Assert.Equal(
+                "old",
+                File.ReadAllText(Path.Combine(target, "application.exe")));
+            Assert.False(Directory.Exists(transaction.StagingDirectory));
+            Assert.False(Directory.Exists(transaction.BackupDirectory));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public void InstallationDirectoryTransaction_RollbackRemovesANewInstallation()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var target = Path.Combine(root, "application");
+
+        try
+        {
+            var transaction = new InstallationDirectoryTransaction(target);
+            File.WriteAllText(
+                Path.Combine(transaction.StagingDirectory, "application.exe"),
+                "new");
+
+            transaction.Swap();
+            transaction.Rollback();
+
+            Assert.False(Directory.Exists(target));
+            Assert.False(Directory.Exists(transaction.StagingDirectory));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public void FileBackupTransaction_RestoresOverwrittenAndNewFiles()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+
+        try
+        {
+            Directory.CreateDirectory(root);
+            var existing = Path.Combine(root, "existing.txt");
+            var created = Path.Combine(root, "created.txt");
+            File.WriteAllText(existing, "old");
+
+            var transaction = new FileBackupTransaction();
+            transaction.Capture(existing);
+            transaction.Capture(created);
+            File.WriteAllText(existing, "new");
+            File.WriteAllText(created, "new");
+
+            transaction.Rollback();
+
+            Assert.Equal("old", File.ReadAllText(existing));
+            Assert.False(File.Exists(created));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public void CopySafely_WithBackupCallbackCanBeRolledBack()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+
+        try
+        {
+            var source = Path.Combine(root, "source");
+            var target = Path.Combine(root, "target");
+            Directory.CreateDirectory(source);
+            Directory.CreateDirectory(target);
+            File.WriteAllText(Path.Combine(source, "data.txt"), "new");
+            File.WriteAllText(Path.Combine(target, "data.txt"), "old");
+
+            var transaction = new FileBackupTransaction();
+            FileInventory.CopySafely(
+                source,
+                target,
+                beforeCopy: transaction.Capture);
+
+            Assert.Equal("new", File.ReadAllText(Path.Combine(target, "data.txt")));
+
+            transaction.Rollback();
+
+            Assert.Equal("old", File.ReadAllText(Path.Combine(target, "data.txt")));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
     private sealed class CollectingProgress<T> : IProgress<T>
     {
         public List<T> Values { get; } = [];
